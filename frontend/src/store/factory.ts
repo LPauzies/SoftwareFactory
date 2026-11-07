@@ -622,6 +622,14 @@ export const useFactoryStore = defineStore('factory', () => {
     return run
   }
 
+  function sanitizeAgentPrompt(raw: string): string {
+    return (raw || '')
+      .replace(/\[[A-Z]{2,6}-\d+\]\s*/g, '')
+      .replace(/\b[A-Z]{2,6}-\d+\b/g, '')
+      .replace(/[ \t]+(\r?\n)/g, '$1')
+      .trim()
+  }
+
   function applyState(data: any) {
     const rawProjects: Project[] = data.projects || []
     for (const p of rawProjects) {
@@ -629,13 +637,19 @@ export const useFactoryStore = defineStore('factory', () => {
         p.agents.push({
           role: 'PR',
           title: 'GitHub PR & Release Integrator (PR)',
-          wagner_pillar: 'Pull Request contre main & Validation Humaine (GitHub)',
+          wagner_pillar: 'Génération automatique de la PR contre main & Revue Humaine',
           model: 'gemini-3.8-flash-low',
           effort: 'low',
           enabled: true,
           system_prompt:
-            'You are the GitHub PR & Release Integrator (PR) in the WAGNER Software Factory. Create a clean feature branch against main, commit all artifacts, push the branch to GitHub origin, and generate a Pull Request against main with a review checklist and direct PR URL for human review.',
+            "Tu es l'Intégrateur GitHub PR & Release (PR) dans WAGNER. Tu prépares la revue humaine, vérifies l'arbre Git de la branche feature, et génères la Pull Request avec la checklist de contrôle en français.",
         })
+      }
+      if (p.agents) {
+        for (const ag of p.agents) {
+          ag.system_prompt = sanitizeAgentPrompt(ag.system_prompt)
+          ag.title = sanitizeAgentPrompt(ag.title)
+        }
       }
     }
     projects.value = rawProjects
@@ -1077,10 +1091,15 @@ export const useFactoryStore = defineStore('factory', () => {
 
   async function saveAgents(agents: AgentConfig[]) {
     if (!activeProject.value) return
+    const sanitized = agents.map((ag) => ({
+      ...ag,
+      title: sanitizeAgentPrompt(ag.title),
+      system_prompt: sanitizeAgentPrompt(ag.system_prompt),
+    }))
     const res = await fetch(`/api/projects/${activeProject.value.id}/agents`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agents }),
+      body: JSON.stringify({ agents: sanitized }),
     })
     if (res.ok) {
       const updated: Project = await res.json()

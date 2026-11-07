@@ -603,7 +603,15 @@ async fn update_agents_handler(
             .iter_mut()
             .find(|p| p.id == id)
             .ok_or((StatusCode::NOT_FOUND, "Project not found".to_string()))?;
-        proj.agents = req.agents;
+        proj.agents = req
+            .agents
+            .into_iter()
+            .map(|mut a| {
+                a.system_prompt = Orchestrator::sanitize_agent_definition_text(&a.system_prompt);
+                a.title = Orchestrator::sanitize_agent_definition_text(&a.title);
+                a
+            })
+            .collect();
         proj.clone()
     };
     orch.persist().await;

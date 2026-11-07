@@ -52,7 +52,8 @@ impl Orchestrator {
         }
 
         // Ensure all projects have the 7th agent role (`AgentRole::Pr`) if loaded from an older 6-agent state file,
-        // and migrate any legacy English system prompts (`in English` / `You are the`) or missing Ponytail Full rules to French defaults.
+        // migrate any legacy English system prompts (`in English` / `You are the`) or missing Ponytail Full rules to French defaults,
+        // and strip any volatile ticket numbers (`CAI-XX`) from persisted agent definitions (CAI-27).
         let default_agents = Self::default_agents();
         for proj in state.projects.iter_mut() {
             for def_ag in &default_agents {
@@ -63,7 +64,11 @@ impl Orchestrator {
                         || (existing_ag.role == AgentRole::Dev && !lower.contains("ponytail"));
                     if needs_migration {
                         existing_ag.system_prompt = def_ag.system_prompt.clone();
+                    } else {
+                        existing_ag.system_prompt =
+                            Self::sanitize_agent_definition_text(&existing_ag.system_prompt);
                     }
+                    existing_ag.title = Self::sanitize_agent_definition_text(&existing_ag.title);
                 } else {
                     proj.agents.push(def_ag.clone());
                 }
@@ -469,6 +474,112 @@ impl Orchestrator {
             head_branch,
             Self::url_encode_query_value(pr_title)
         )
+    }
+
+    /// Detect whether a ticket or operator prompt explicitly requests evolving/updating the static agent archetype definitions (`.agents/`).
+    pub fn is_explicit_agent_evolution_request(feature_or_title: &str) -> bool {
+        let lower = feature_or_title.to_lowercase();
+        let mentions_evolution = [
+            "update agent",
+            "evolve agent",
+            "modify agent",
+            "change agent",
+            "upgrade agent",
+            "agent definition",
+            "agent archetype",
+            "mettre à jour l'agent",
+            "mettre a jour l'agent",
+            "modifier l'agent",
+            "modifier les agents",
+            "faire bouger l'agent",
+            "faire évoluer l'agent",
+            "faire evoluer l'agent",
+            "évolution d'agent",
+            "evolution d'agent",
+            "archétype d'agent",
+            "archetype d'agent",
+        ]
+        .iter()
+        .any(|kw| lower.contains(kw));
+
+        let forbids_pollution = [
+            "arrêter de mettre à jour",
+            "arreter de mettre a jour",
+            "ne doit garder en mémoire",
+            "ne doit pas modifier",
+            "immuable",
+            "immutable",
+            "stop updating",
+            "sanctuarisation",
+        ]
+        .iter()
+        .any(|kw| lower.contains(kw));
+
+        mentions_evolution && !forbids_pollution
+    }
+
+    /// Strip any volatile ticket identifiers (`[CAI-27]`, `CAI-27`, `WAG-101`, `FIX-12`) or release tags (`v1.2.0`)
+    /// from an agent definition or system prompt so agent archetypes never retain ticket memory (CAI-27).
+    /// shortcut: character-level scanner without regex crate dependency, upgrade to compiled Regex if complex pattern rules are added.
+    pub fn sanitize_agent_definition_text(text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        let chars: Vec<char> = text.chars().collect();
+        let len = chars.len();
+        let mut i = 0;
+
+        while i < len {
+            // Strip bracketed ticket references like `[CAI-27]`
+            if chars[i] == '[' {
+                if let Some(close_offset) = chars[i + 1..].iter().position(|&c| c == ']') {
+                    let inside: String = chars[i + 1..i + 1 + close_offset].iter().collect();
+                    if Self::looks_like_ticket_id(inside.trim()) {
+                        i += close_offset + 2;
+                        if i < len && chars[i] == ' ' {
+                            i += 1;
+                        }
+                        continue;
+                    }
+                }
+            }
+
+            // Strip standalone ticket tokens like `CAI-27`, `WAG-101`, `FIX-12` at word boundaries
+            let at_word_start = i == 0 || !chars[i - 1].is_alphanumeric();
+            if at_word_start && chars[i].is_ascii_uppercase() {
+                let mut end = i;
+                while end < len
+                    && (chars[end].is_ascii_alphanumeric() || chars[end] == '-')
+                {
+                    end += 1;
+                }
+                let token: String = chars[i..end].iter().collect();
+                if Self::looks_like_ticket_id(&token) {
+                    i = end;
+                    continue;
+                }
+            }
+
+            out.push(chars[i]);
+            i += 1;
+        }
+
+        out.lines()
+            .map(|l| l.trim_end())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_string()
+    }
+
+    /// Check if a token matches a standard ticket key (`CAI-27`, `WAG-101`, `PAY-201`, `SRE-301`, `FIX-12`).
+    pub fn looks_like_ticket_id(token: &str) -> bool {
+        let Some((prefix, num)) = token.split_once('-') else {
+            return false;
+        };
+        prefix.len() >= 2
+            && prefix.len() <= 6
+            && prefix.chars().all(|c| c.is_ascii_uppercase())
+            && !num.is_empty()
+            && num.chars().all(|c| c.is_ascii_digit())
     }
 
     /// Resolve the active response locale (`"fr"` or `"en"`).
@@ -2702,9 +2813,6 @@ fi"#,
                 content: po_text.clone(),
             };
             po_artifacts.insert(0, po_file);
-            let po_dest = workspace_dir.join(".agents/po.md");
-            if let Some(parent) = po_dest.parent() { let _ = tokio::fs::create_dir_all(parent).await; }
-            let _ = tokio::fs::write(&po_dest, &po_text).await;
 
             let exp_file = ArtifactFile {
                 path: ".agents/expert.md".to_string(),
@@ -2713,9 +2821,6 @@ fi"#,
                 content: exp_text.clone(),
             };
             expert_artifacts.insert(0, exp_file);
-            let exp_dest = workspace_dir.join(".agents/expert.md");
-            if let Some(parent) = exp_dest.parent() { let _ = tokio::fs::create_dir_all(parent).await; }
-            let _ = tokio::fs::write(&exp_dest, &exp_text).await;
 
             let po_summary = po_text.lines().find(|l| {
                 let t = l.trim();
@@ -2888,7 +2993,8 @@ fi"#,
                 1. Inspect existing files, components, and project structure.\n\
                 2. Directly use your editing tools (`edit_file`, `write_file`) or bash commands to implement the feature in real files (e.g. `backend/src/...`, `frontend/src/...`).\n\
                 3. NEVER create dummy or placeholder files like `src/feature_*.rs` or fake directories at the repository root.\n\
-                4. If you output code blocks in markdown, specify their relative path explicitly (e.g. ```rust:backend/src/... or ```ts:frontend/src/...).\n\
+                4. NEVER modify `.agents/*.md` files with ticket numbers or session outputs; agent archetype definitions in `.agents/` are strictly immutable and read-only unless the user explicitly asks to evolve an agent definition.\n\
+                5. If you output code blocks in markdown, specify their relative path explicitly (e.g. ```rust:backend/src/... or ```ts:frontend/src/...).\n\
                 First write a `<thinking>`...`</thinking>` block with 3 concise points on your technical plan, then write the code and summarize the files modified."
             } else {
                 "Do NOT call any tools or modify repo files. First write a `<thinking>`...`</thinking>` block with 3 concise bullet points showing your internal Chain of Thought and architectural reasoning. If you have a question or assumption the human operator can steer, include `<question>your question</question>`. Then write your concise Markdown deliverable (120-180 words) covering your role according to Wagner Software Factory principles."
@@ -3113,11 +3219,14 @@ fi"#,
             };
             artifacts.insert(0, role_md_file);
 
-            // Physically write all generated artifacts to disk in the target workspace directory!
-            // STRICT FILTER: NEVER write useless markdown/yaml/feature files to ops/, specs/, docs/, or tests/!
+            // Physically write only newly created DEV source code artifacts to disk when needed.
+            // STRICT FILTER (CAI-27): `.agents/` archetype definitions are strictly immutable and read-only during runs —
+            // never write session deliverables, ticket numbers, or generated markdown/yaml/feature files to `.agents/`, `.github/PULL_REQUEST_`, `ops/`, `specs/`, `docs/`, or `tests/`!
             for art in &artifacts {
                 let clean_path = art.path.trim_start_matches(['/', '\\']);
                 if clean_path.contains("..")
+                    || clean_path.starts_with(".agents/")
+                    || clean_path.starts_with(".github/PULL_REQUEST_")
                     || clean_path.starts_with("src/feature_")
                     || clean_path.starts_with("ops/")
                     || clean_path.starts_with("specs/")
@@ -3131,7 +3240,7 @@ fi"#,
                 let dest = workspace_dir.join(clean_path);
                 // SAFETY GUARD: NEVER overwrite existing source files with snippets extracted from markdown!
                 // Autonomous DEV agents edit existing files in-place using tools; markdown snippets are non-exhaustive.
-                if dest.exists() && !clean_path.starts_with(".agents/") {
+                if dest.exists() {
                     continue;
                 }
                 if let Some(parent) = dest.parent() {
@@ -3157,10 +3266,20 @@ fi"#,
                     warn!("QUALITY GATE REJECTED: DEV agent subprocess failed or timed out! Halting pipeline.");
                 } else {
                     let commit_slug = ticket_identifier.as_deref().unwrap_or("WAGNER");
+                    let allow_agent_evo = if Self::is_explicit_agent_evolution_request(&feature_request) {
+                        "1"
+                    } else {
+                        "0"
+                    };
                     let dev_commit_script = format!(
                         r#"cd "{ws}" 2>/dev/null || exit 0
 if [ ! -d .git ] && [ -d ../.git ]; then cd ..; fi
 if [ -d .git ]; then
+  # CAI-27 Guardrail: prevent accidental session/ticket pollution in .agents/ or .github/PULL_REQUEST_*.md
+  rm -f .agents/adr_*.md .agents/backlog_*.md .agents/domain_rules_*.md .agents/bdd_*.feature .agents/pipeline_*.yml .github/PULL_REQUEST_*.md 2>/dev/null || true
+  if [ "{allow_evo}" = "0" ]; then
+    git checkout HEAD -- .agents/ 2>/dev/null || true
+  fi
   git add -A
   # Quality Gate: check if any real code file (non-markdown, outside of .agents/, docs/, specs/, ops/, tests/, .github/) is modified
   REAL_CODE_FILES=$(git diff --cached --name-only 2>/dev/null | grep -vE '^\.agents/|^docs/|^specs/|^ops/|^tests/|^\.github/|\.md$|\.txt$|\.yml$|\.feature$' || true)
@@ -3175,6 +3294,7 @@ fi"#,
                         ws = workspace_dir.to_string_lossy(),
                         slug = commit_slug,
                         ver = version_tag,
+                        allow_evo = allow_agent_evo,
                     );
                     if let Ok(out) = tokio::process::Command::new("bash")
                         .arg("-c")
@@ -3853,6 +3973,12 @@ fi"#,
         let base_branch = cfg.base_branch_for_workspace(workspace_dir);
         let mut github_owner_repo = Self::detect_github_owner_repo(workspace_dir, &cfg);
 
+        let allow_agent_evo = if Self::is_explicit_agent_evolution_request(feature_request) {
+            "1"
+        } else {
+            "0"
+        };
+
         // 1. Ensure `{base_branch}` (`master`) is up-to-date and commit the feature changes onto `refs/heads/{branch_name}` (factory-XXX)
         let git_script = format!(
             r#"set -e
@@ -3862,6 +3988,10 @@ if [ ! -d .git ] && [ -d ../.git ]; then
 fi
 if [ -d .git ]; then
   git fetch origin "{base}" 2>/dev/null || true
+  rm -f .agents/adr_*.md .agents/backlog_*.md .agents/domain_rules_*.md .agents/bdd_*.feature .agents/pipeline_*.yml .github/PULL_REQUEST_*.md 2>/dev/null || true
+  if [ "{allow_evo}" = "0" ]; then
+    git checkout HEAD -- .agents/ 2>/dev/null || true
+  fi
   git add -A 2>/dev/null || true
   if ! git diff --cached --quiet 2>/dev/null; then
     git -c user.name="WAGNER PR Agent" -c user.email="wagner-pr@softwarefactory.local" commit -m "docs({slug}): final delivery & living docs for {ver}" 2>/dev/null || true
@@ -3900,6 +4030,7 @@ fi
             branch = branch_name,
             slug = Self::clean_ticket_identifier(ticket_identifier.unwrap_or("WAGNER")),
             ver = version_tag,
+            allow_evo = allow_agent_evo,
         );
 
         let mut has_code_in_branch = false;
@@ -4363,5 +4494,60 @@ let test = 123;
             url,
             "https://github.com/LPauzies/SoftwareFactory/compare/master...factory-CAI-26?expand=1&title=%5BCAI-26%5D%20Titrage%20explicite%20PR"
         );
+    }
+
+    #[test]
+    fn test_cai_27_immutable_agent_definitions_and_zero_ticket_pollution() {
+        // 1. Verify sanitize_agent_definition_text strips ticket numbers (`[CAI-27]`, `CAI-26`, `WAG-101`, `FIX-12`)
+        let polluted = "[CAI-27] Tu es le Product Owner (PO) pour CAI-26 et WAG-101 dans la Software Factory WAGNER.";
+        let cleaned = Orchestrator::sanitize_agent_definition_text(polluted);
+        assert!(!cleaned.contains("CAI-27"));
+        assert!(!cleaned.contains("CAI-26"));
+        assert!(!cleaned.contains("WAG-101"));
+        assert_eq!(
+            cleaned,
+            "Tu es le Product Owner (PO) pour  et  dans la Software Factory WAGNER."
+        );
+
+        // 2. Verify is_explicit_agent_evolution_request distinguishes explicit evolution from CAI-27 complaint
+        assert!(
+            !Orchestrator::is_explicit_agent_evolution_request(
+                "[CAI-27] Fais en sortie d'arrêter de mettre à jour mes agents pour rien en leur donnant des numéros de ticket, à part si explicitement je te demande de faire bouger l'agent"
+            ),
+            "CAI-27 ticket itself must NOT trigger agent evolution"
+        );
+        assert!(
+            !Orchestrator::is_explicit_agent_evolution_request(
+                "[CAI-26] Nom de la PR explicite au clic"
+            ),
+            "Standard feature ticket must NOT trigger agent evolution"
+        );
+        assert!(
+            Orchestrator::is_explicit_agent_evolution_request(
+                "Mettre à jour l'agent QA pour ajouter la vérification d'accessibilité"
+            ),
+            "Explicit request to update an agent must be recognized"
+        );
+
+        // 3. Verify all `.agents/*.md` files in the repository are static archetypes with zero ticket identifiers
+        let repo_agents_dir = PathBuf::from("/home/mediaserver/Documents/SoftwareFactory/.agents");
+        if repo_agents_dir.exists() {
+            for role_file in ["po.md", "expert.md", "archi.md", "dev.md", "qa.md", "ops.md", "pr.md"] {
+                let p = repo_agents_dir.join(role_file);
+                let content = std::fs::read_to_string(&p).expect("Agent definition file must exist");
+                let sanitized = Orchestrator::sanitize_agent_definition_text(&content);
+                assert_eq!(
+                    content.trim(),
+                    sanitized,
+                    "Agent definition {} must not contain any ticket number (CAI-XX, WAG-XX, etc.)",
+                    role_file
+                );
+            }
+            assert!(
+                !repo_agents_dir.join("adr_v1.1.0.md").exists()
+                    && !repo_agents_dir.join("adr_v1.2.0.md").exists(),
+                "Volatile ADR files must not pollute .agents/"
+            );
+        }
     }
 }
