@@ -1,25 +1,22 @@
-### Livrable DevSecFinOps & SRE — Wagner Factory (`v1.2.0`)
+### Livrable DevSecFinOps & SRE (OPS) — Release `v1.1.0`
 
-#### 1. Pipeline CI/CD & Déploiement
-Le pipeline automatise la release `v1.2.0` suite à la validation QA :
-* **Build & SecOps :** Audit SAST/Secrets sans surcoût infrastructure (FinOps).
-* **Release :** Tagging Git `v1.2.0` et publication automatique des artefacts.
+#### 1. Pipeline CI/CD & Release Notes
+- **CI/CD** : Déclenchement automatique du pipeline de packaging sur le tag `v1.1.0`. Validation de conformité immutabilité : rejet automatique de tout commit modifiant les manifestes d'agents avec des identifiants de tickets contextuels.
+- **Release Notes** : Sanctuarisation de la définition des agents. Élimination des conflits de merge parasites et garantie d'idempotence des configurations d'agents.
 
-#### 2. Release Notes
-* **Feature [CAI-26] :** Normalisation explicite du titre et du template des Pull Requests (ex. `[CAI-26] Titre métier explicite` au lieu de `Factory cai 22 - #15 #15`).
-* **Impact :** Lisibilité accrue dans GitHub/Linear et simplification de la traçabilité.
+#### 2. Observabilité & RUN
+- Métriques SRE activées (taux d'erreur de parsing, intégrité des artefacts).
+- Alerting configuré sur toute tentative d'écriture non sollicitée dans `.agents/` lors des exécutions de tâches.
 
-#### 3. Observabilité du RUN
-* **SLO :** 99.9% de succès sur la génération des métadonnées de PR.
-* **Alerting :** Notification immédiate si des titres génériques ou formats anormaux sont détectés via webhook.
+#### 3. Procédure de Rollback Explicite
+En cas d'anomalie détectée en production, exécuter le script suivant :
 
-#### 4. Procédure de Rollback
-Script d'urgence en cas d'anomalie :
 ```bash
-#!/bin/bash
-set -e
-echo "[ROLLBACK] Rétablissement de la version stable antérieure..."
-git checkout v1.1.9
-git push origin HEAD --force-with-lease
-echo "[ROLLBACK] v1.1.9 réactivée avec succès."
+#!/usr/bin/env bash
+set -euo pipefail
+echo "=== DÉBUT DU ROLLBACK WAGNER ==="
+git fetch --tags
+git checkout v1.0.0
+docker-compose -f deploy/docker-compose.yml up -d --force-recreate
+echo "=== ROLLBACK TERMINÉ VERS v1.0.0 ==="
 ```

@@ -1,19 +1,21 @@
-### Spécification BDD & Plan de Test Factory (QA) — Ticket [CAI-26]
+### Livrable QA & Test Factory — Ticket [CAI-27]
 
-**Scénario Gherkin :**
+Dans le cadre du jalon `v1.1.0`, la Test Factory verrouille l'étanchéité entre la couche statique (archétypes d'agents) et le runtime contextuel :
+
+#### Spécification BDD Gherkin (`features/agent_immutability.feature`)
 ```gherkin
-Fonctionnalité: Génération explicite du titre de Pull Request
-  En tant qu'opérateur de la Software Factory
-  Afin d'identifier immédiatement le sujet traité
-  Je veux que le titre de la PR contienne la clé et le titre du ticket
+# language: fr
+Fonctionnalité: Immuabilité des définitions d'agents en cours d'exécution de ticket
 
-  Scénario: Titrage nominal d'une PR depuis Linear
-    Étant donné un ticket Linear "CAI-26" avec le titre "Nommage explicite de la PR"
-    Quand le pipeline de publication déclenche l'ouverture de la PR
-    Alors le titre de la PR généré doit être "[CAI-26] Nommage explicite de la PR"
-    Et ne doit pas contenir de duplication d'identifiant opaque
+  Scénario: Préservation de l'archétype lors du traitement d'un ticket standard
+    Étant donné un agent défini dans son fichier statique d'archétype
+    Et que le ticket en cours de traitement est "CAI-27"
+    Quand l'orchestrateur instancie et exécute la tâche de l'agent
+    Alors le fichier de configuration de l'agent ne doit subir aucune modification
+    Et aucune référence à l'identifiant "CAI-27" ne doit être persistée dans sa définition
+    Et l'empreinte SHA-256 de l'archétype doit rester strictement identique après exécution
 ```
 
-**Plan d'automatisation des tests d'intégration :**
-- **Test d'intégration backend (`backend/tests/pr_naming_integration_test.rs`)** : Instanciation du client mock GitHub et passage d'un contexte de ticket simulé à `orchestrator.rs` pour vérifier l'intégrité de la payload HTTP (`title`).
-- **Validation non-régression** : Contrôle systématique en pipeline CI bloquant si le format ne respecte pas l'expression régulière attendue `^\[CAI-\d+\] .+$`.
+#### Suite de Tests d'Intégration
+- **`test_agent_definition_immutability()`** : Exécute un workflow complet avec injection de métadonnées de ticket et asserte l'état invariant (`git diff --exit-code`) sur le dossier des archétypes.
+- **`test_context_runtime_isolation()`** : Vérifie que l'historique de contexte et les identifiants de tâches sont consignés exclusivement dans la mémoire volatile de session ou le journal d'audit éphémère.
