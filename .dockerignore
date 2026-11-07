@@ -1,0 +1,14 @@
+# Ignore build directories, local dependencies, runtime state, and secrets in Docker context
+backend/target
+frontend/node_modules
+frontend/dist
+backend/data
+backend/workspaces
+data
+workspaces
+.git
+.gitignore
+.env
+.env.*
+*.log
+*.md

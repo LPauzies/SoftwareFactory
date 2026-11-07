@@ -1,0 +1,60 @@
+# =============================================================================
+# Rust Backend Build Artifacts
+# =============================================================================
+backend/target/
+**/target/
+**/*.rs.bk
+
+# =============================================================================
+# Vue 3 / Node.js Frontend Build & Dependencies
+# =============================================================================
+frontend/node_modules/
+**/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# =============================================================================
+# Runtime State, Generated Workspaces & Logs
+# =============================================================================
+backend/data/
+backend/workspaces/
+data/
+workspaces/
+.factory/
+*.log
+*.pid
+*.seed
+*.pid.lock
+
+# =============================================================================
+# Secrets, Credentials & Environment Variables
+# =============================================================================
+wagner.toml
+!wagner.example.toml
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+secrets/
+credentials.json
+service-account*.json
+.gemini/
+
+# =============================================================================
+# OS & Editor Files
+# =============================================================================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

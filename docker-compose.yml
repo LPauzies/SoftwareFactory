@@ -1,0 +1,24 @@
+services:
+  wagner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wagner-software-factory
+    ports:
+      - "8888:8888"
+    environment:
+      - PORT=8888
+      - STATIC_DIR=/app/static
+      - AGY_BIN=/usr/local/bin/agy
+      - RUST_LOG=wagner_backend=info,tower_http=info
+      - LINEAR_API_KEY=${LINEAR_API_KEY:-}
+    volumes:
+      # Persist factory state, secrets config (wagner.toml), and generated workspaces on host
+      - ./wagner.toml:/app/wagner.toml
+      - ./data:/app/data
+      - ./workspaces:/app/workspaces
+      # Optional: Mount host Antigravity (agy) binary & CLI config into container
+      # so the containerized Rust orchestrator can spawn live agy subprocesses
+      - /home/mediaserver/.local/bin/agy:/usr/local/bin/agy:ro
+      - /home/mediaserver/.gemini:/root/.gemini
+    restart: unless-stopped

@@ -1,0 +1,29 @@
+# =============================================================================
+# WAGNER — Example Configuration & Secrets (wagner.example.toml)
+# Copy this file to `wagner.toml` and fill in your secrets.
+# =============================================================================
+
+[secrets]
+linear_api_key = "lin_api_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+github_token = ""
+gitlab_token = ""
+gemini_api_key = ""
+
+[factory]
+default_branch = "master"
+agy_binary_path = "/home/mediaserver/.local/bin/agy"
+linear_sync_interval_seconds = 20
+
+# =============================================================================
+# Collections: 1 Linear Project = 1 Local Repo = 1 GitHub Repo
+# =============================================================================
+[[projects]]
+linear_project = "Software Factory"
+local_path = "/home/mediaserver/Documents/SoftwareFactory"
+github_repo = "LPauzies/SoftwareFactory"
+
+[[projects]]
+linear_project = "Split Second"
+local_path = "/home/mediaserver/Documents/SplitSecond"
+github_repo = "LPauzies/SplitSecond"
+
