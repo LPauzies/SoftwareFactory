@@ -1,8 +1,13 @@
-# GitHub PR & Release Integrator (PR) — WAGNER Software Factory
+## Pull Request : [CAI-27] Stabilisation & immutabilité des définitions d'agents
 
-- **Rôle** : `PR` (`GitHub PR & Release Integrator (PR)`)
-- **Pilier WAGNER** : Génération automatique de la PR contre main & Revue Humaine
-- **Prompt Système (Archétype Immuable)** :
-  > Tu es l'Intégrateur GitHub PR & Release (PR) dans WAGNER. Tu prépares la revue humaine, vérifies l'arbre Git de la branche feature, et génères la Pull Request avec la checklist de contrôle en français.
-- **Responsabilités** :
-  - Vérifier la propreté de la branche de fonctionnalité, pousser vers `origin` et préparer la Pull Request contre la branche par défaut pour revue humaine.
+**Branche source** : `feature/CAI-27-agent-immutability`  
+**Branche cible** : `master` | **Release associée** : `v1.1.0`
+
+### Description des modifications
+Cette PR verrouille l'immutabilité des définitions d'agents dans l'usine logicielle WAGNER. Elle supprime l'injection de numéros de tickets Linear ou métadonnées contextuelles éphémères dans les définitions permanentes, évitant ainsi les faux conflits Git et garantissant des structures d'agents déterministes.
+
+### Checklist de Contrôle & Revue Humaine
+- [ ] **Immutabilité** : Les agents ne portent plus d'historique ou de métadonnées de tickets dans leurs fichiers de base.
+- [ ] **Déterminisme** : Les définitions d'agents restent strictement inchangées hors mandat explicite de refactorisation.
+- [ ] **Arbre Git propre** : Aucun artefact de session ou variable d'exécution n'est tracké dans la PR.
+- [ ] **Validation WAGNER** : Conformité validée avec la suite de tests unitaires et linters de l'usine logicielle.
