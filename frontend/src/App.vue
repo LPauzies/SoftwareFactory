@@ -816,7 +816,7 @@ async function handleSaveAgentModels() {
                 <div class="running-agent-info">
                   <span class="agent-spinner" aria-hidden="true"></span>
                   <span class="running-pulse-dot" aria-hidden="true"></span>
-                  <span class="running-role-pill">Agent {{ tk.active_role }}</span>
+                  <span class="running-role-pill">{{ tk.active_role }}</span>
                   <span
                     v-if="ticketActivity(tk).elapsedSeconds > 0"
                     class="running-live-timer mono"
@@ -826,10 +826,10 @@ async function handleSaveAgentModels() {
                 </div>
                 <button
                   class="btn-kill-compact"
-                  title="Interrompre l'agent"
+                  title="Interrompre l'agent en cours"
                   @click="handleKillAgent(tk, $event)"
                 >
-                  Interrompre
+                  ✕ Stop
                 </button>
               </div>
               <div v-if="ticketActivity(tk).startedAt" class="running-widget-meta mono">

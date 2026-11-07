@@ -677,12 +677,13 @@ code, pre {
 .card-running-widget {
   display: flex;
   flex-direction: column;
-  gap: 0.28rem;
-  padding: 0.42rem 0.6rem;
+  gap: 0.25rem;
+  padding: 0.38rem 0.55rem;
   border-radius: 6px;
   background: linear-gradient(135deg, rgba(88, 101, 242, 0.14) 0%, rgba(0, 168, 252, 0.1) 100%);
   border: 1px solid rgba(88, 101, 242, 0.4);
   box-shadow: 0 2px 8px rgba(88, 101, 242, 0.15);
+  overflow: hidden;
 }
 
 .running-widget-header {
@@ -690,14 +691,16 @@ code, pre {
   align-items: center;
   justify-content: space-between;
   gap: 0.4rem;
+  width: 100%;
 }
 
 .running-agent-info {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.32rem;
   min-width: 0;
   flex: 1;
+  overflow: hidden;
 }
 
 .running-role-pill {
@@ -708,28 +711,30 @@ code, pre {
 }
 
 .running-live-timer {
-  background: rgba(0, 168, 252, 0.18);
-  border: 1px solid rgba(0, 168, 252, 0.4);
+  background: rgba(0, 168, 252, 0.2);
+  border: 1px solid rgba(0, 168, 252, 0.45);
   color: #38bdf8;
   font-size: 0.68rem;
   font-weight: 700;
   padding: 0.08rem 0.35rem;
   border-radius: 4px;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .btn-kill-compact {
-  background: rgba(242, 63, 67, 0.15);
-  border: 1px solid rgba(242, 63, 67, 0.4);
+  background: rgba(242, 63, 67, 0.18);
+  border: 1px solid rgba(242, 63, 67, 0.45);
   color: #fca5a5;
   font-size: 0.68rem;
   font-weight: 600;
-  padding: 0.18rem 0.5rem;
+  padding: 0.15rem 0.45rem;
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.15s ease;
   white-space: nowrap;
   flex-shrink: 0;
+  line-height: 1.2;
 }
 
 .btn-kill-compact:hover {
@@ -1166,13 +1171,14 @@ code, pre {
   animation-delay: 0.4s;
 }
 
-/* Card Pipeline Mini-Timeline & Proportional 6-Step Grid */
+/* Card Pipeline Mini-Timeline & Proportional Multi-Step Grid */
 .card-pipeline-grid {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 3px;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 2px;
   margin-top: 0.35rem;
-  padding: 3px;
+  padding: 2px;
   background: rgba(0, 0, 0, 0.22);
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.05);
