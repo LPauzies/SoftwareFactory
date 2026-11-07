@@ -298,9 +298,13 @@ async fn upsert_project_mapping_handler(
                 }
                 if tk.stage == KanbanStage::PrReview {
                     if let Some(ref br) = tk.pr_branch {
-                        tk.pr_url = Some(format!(
-                            "https://github.com/{}/compare/main...{}?expand=1",
-                            tk.github_repo, br
+                        let pr_title =
+                            Orchestrator::format_pr_title(Some(&tk.identifier), &tk.title);
+                        tk.pr_url = Some(Orchestrator::build_github_compare_url(
+                            &tk.github_repo,
+                            "master",
+                            br,
+                            &pr_title,
                         ));
                     }
                 }
@@ -342,9 +346,13 @@ async fn update_linear_project_repo_handler(
                 tk.github_repo = gh_repo.clone();
                 if tk.stage == KanbanStage::PrReview {
                     if let Some(ref br) = tk.pr_branch {
-                        tk.pr_url = Some(format!(
-                            "https://github.com/{}/compare/master...{}?expand=1",
-                            gh_repo, br
+                        let pr_title =
+                            Orchestrator::format_pr_title(Some(&tk.identifier), &tk.title);
+                        tk.pr_url = Some(Orchestrator::build_github_compare_url(
+                            &gh_repo,
+                            "master",
+                            br,
+                            &pr_title,
                         ));
                     }
                 }

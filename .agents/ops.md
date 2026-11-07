@@ -1,21 +1,25 @@
-### Livrable DevSecFinOps & SRE (OPS) — Release `v1.4.0`
+### Livrable DevSecFinOps & SRE — Wagner Factory (`v1.2.0`)
 
-**CI/CD & DevSecOps**
-Le pipeline GitHub Actions valide les scans de dépendances, tests unitaires et d'intégration i18n (`locale: fr-FR`). L'artefact `v1.4.0` est signé cryptographiquement via Cosign avant promotion vers le registre sécurisé.
+#### 1. Pipeline CI/CD & Déploiement
+Le pipeline automatise la release `v1.2.0` suite à la validation QA :
+* **Build & SecOps :** Audit SAST/Secrets sans surcoût infrastructure (FinOps).
+* **Release :** Tagging Git `v1.2.0` et publication automatique des artefacts.
 
-**Observabilité & SRE (RUN)**
-- **Métriques clés** : `agent_response_locale_total{locale="fr"}`, latence d'inférence P95/P99, et taux de fallback EN (`agent_locale_fallback_ratio`).
-- **SLO/Alerting** : Alerte critique si `agent_locale_fallback_ratio > 0.02` sur une fenêtre glissante de 5 minutes.
-- **FinOps** : Analyse d'impact des tokens de prompt système i18n (+1.8% d'overhead marginal maîtrisé).
+#### 2. Release Notes
+* **Feature [CAI-26] :** Normalisation explicite du titre et du template des Pull Requests (ex. `[CAI-26] Titre métier explicite` au lieu de `Factory cai 22 - #15 #15`).
+* **Impact :** Lisibilité accrue dans GitHub/Linear et simplification de la traçabilité.
 
-**Release Notes & Procédure de Rollback**
-- **Notes** : Correction du ticket `CAI-23` : alignement automatique et persistant des réponses agents en français selon la locale résolue.
-- **Script Rollback 1-Click (`./scripts/rollback-v1.4.0.sh`)** :
+#### 3. Observabilité du RUN
+* **SLO :** 99.9% de succès sur la génération des métadonnées de PR.
+* **Alerting :** Notification immédiate si des titres génériques ou formats anormaux sont détectés via webhook.
+
+#### 4. Procédure de Rollback
+Script d'urgence en cas d'anomalie :
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
-echo "Rollback v1.4.0 -> v1.3.9..."
-kubectl set image deployment/factory-agents agents=ghcr.io/wagner/agents:v1.3.9 --record
-kubectl rollout status deployment/factory-agents
-redis-cli FLUSHDB # Invalidation du cache de session/prompts
+#!/bin/bash
+set -e
+echo "[ROLLBACK] Rétablissement de la version stable antérieure..."
+git checkout v1.1.9
+git push origin HEAD --force-with-lease
+echo "[ROLLBACK] v1.1.9 réactivée avec succès."
 ```
