@@ -60,7 +60,6 @@ export interface FactoryTicket {
   pr_url?: string | null
   pr_branch?: string | null
   version_tag: string
-  created_at?: string
   updated_at: string
 }
 
@@ -365,34 +364,12 @@ export const useFactoryStore = defineStore('factory', () => {
       null
   )
 
-  const dismissedTicketIds = ref<string[]>(
-    JSON.parse(localStorage.getItem('wagner_dismissed_tickets') || '[]')
-  )
-
-  function recordDismissedTicket(id: string, identifier?: string) {
-    if (id && !dismissedTicketIds.value.includes(id)) {
-      dismissedTicketIds.value.push(id)
-    }
-    if (identifier && !dismissedTicketIds.value.includes(identifier)) {
-      dismissedTicketIds.value.push(identifier)
-    }
-    localStorage.setItem(
-      'wagner_dismissed_tickets',
-      JSON.stringify(dismissedTicketIds.value)
-    )
-  }
-
   const projectTickets = computed(() => {
     if (!activeLinearProject.value) {
       return []
     }
     const targetId = activeLinearProject.value.id
-    return tickets.value.filter(
-      (t) =>
-        t.linear_project_id === targetId &&
-        !dismissedTicketIds.value.includes(t.id) &&
-        !dismissedTicketIds.value.includes(t.identifier)
-    )
+    return tickets.value.filter((t) => t.linear_project_id === targetId)
   })
 
   const selectedTicket = computed(() =>
@@ -577,13 +554,9 @@ export const useFactoryStore = defineStore('factory', () => {
     linearProjects.value = (data.linear_projects || []).filter(
       (p: LinearProject) => !p.name.startsWith('Team:')
     )
-    tickets.value = (data.tickets || [])
-      .filter(
-        (t: FactoryTicket) =>
-          !dismissedTicketIds.value.includes(t.id) &&
-          !dismissedTicketIds.value.includes(t.identifier)
-      )
-      .map((t: FactoryTicket) => normalizeTicketPrReview(t))
+    tickets.value = (data.tickets || []).map((t: FactoryTicket) =>
+      normalizeTicketPrReview(t)
+    )
     linearStatus.value = data.linear_status || null
     runs.value = (data.runs || []).map((r: PipelineRun) => normalizeRunPrStep(r))
     releases.value = data.releases || []
@@ -646,13 +619,6 @@ export const useFactoryStore = defineStore('factory', () => {
   function handleFactoryEvent(evt: any) {
     if (evt.event_type === 'ticket_updated' && evt.ticket) {
       upsertTicket(evt.ticket)
-    } else if (evt.event_type === 'ticket_deleted' && evt.ticket_id) {
-      recordDismissedTicket(evt.ticket_id, evt.identifier)
-      tickets.value = tickets.value.filter((t) => t.id !== evt.ticket_id)
-      if (selectedTicketId.value === evt.ticket_id) {
-        selectedTicketId.value = null
-      }
-      lastActivityToast.value = `Deleted ${evt.identifier || evt.ticket_id}`
     } else if (evt.event_type === 'pipeline_started') {
       lastActivityToast.value = `WAGNER STARTED // ${evt.version_tag}`
       const tk = tickets.value.find((t) => t.id === evt.ticket_id)
@@ -788,13 +754,9 @@ export const useFactoryStore = defineStore('factory', () => {
       if (evt.linear_status) linearStatus.value = evt.linear_status
       if (evt.linear_projects) linearProjects.value = evt.linear_projects
       if (evt.tickets) {
-        tickets.value = evt.tickets
-          .filter(
-            (t: FactoryTicket) =>
-              !dismissedTicketIds.value.includes(t.id) &&
-              !dismissedTicketIds.value.includes(t.identifier)
-          )
-          .map((t: FactoryTicket) => normalizeTicketPrReview(t))
+        tickets.value = evt.tickets.map((t: FactoryTicket) =>
+          normalizeTicketPrReview(t)
+        )
       }
       lastActivityToast.value = `Linear synced (${evt.tickets?.length || 0} tickets)`
     }
@@ -917,25 +879,6 @@ export const useFactoryStore = defineStore('factory', () => {
     }
   }
 
-  async function deleteTicket(ticketId: string) {
-    const existing = tickets.value.find((t) => t.id === ticketId)
-    if (!existing || existing.stage === 'todo') {
-      return
-    }
-    recordDismissedTicket(ticketId, existing.identifier)
-    tickets.value = tickets.value.filter((t) => t.id !== ticketId)
-    if (selectedTicketId.value === ticketId) {
-      selectedTicketId.value = null
-    }
-    try {
-      await fetch(`/api/tickets/${ticketId}`, {
-        method: 'DELETE',
-      })
-    } catch {
-      // ignore network error; local dismissal already recorded
-    }
-  }
-
   async function steerTicketAgent(
     ticketId: string,
     role: string,
@@ -1055,7 +998,6 @@ export const useFactoryStore = defineStore('factory', () => {
     createTicket,
     launchTicketFactory,
     cancelTicketFactory,
-    deleteTicket,
     steerTicketAgent,
     triggerRollbackForTicket,
     moveTicketStage,
