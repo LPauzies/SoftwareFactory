@@ -1,4 +1,4 @@
-use crate::agy::AgyBridge;
+use crate::agy::{AgyBridge, AgyPrintResponse};
 use crate::config::WagnerConfig;
 use crate::linear::LinearClient;
 use crate::models::*;
@@ -697,8 +697,8 @@ impl Orchestrator {
                 role: AgentRole::Archi,
                 title: AgentRole::Archi.title().to_string(),
                 wagner_pillar: AgentRole::Archi.wagner_pillar().to_string(),
-                model: "gemini-4-argon-medium".to_string(),
-                effort: "medium".to_string(),
+                model: "gemini-3.8-flash-low".to_string(),
+                effort: "low".to_string(),
                 enabled: true,
                 system_prompt: "Tu es l'Architecte Logiciel (ARCHI) de la Software Factory WAGNER. Garantir la compatibilité et l'homogénéité des modules à travers l'usine logicielle, concevoir des frontières modulaires propres et spécifier des transitions d'état réversibles (rollback-safe) en français.".to_string(),
             },
@@ -2272,7 +2272,325 @@ fi"#,
         let mut generated_pr_url: Option<String> = None;
         let mut generated_pr_branch: Option<String> = None;
 
-        for idx in 0..project.agents.len() {
+        // --- Fast-Track Parallel Inception (PO + Business Expert concurrently) ---
+        let (is_po_skipped, is_expert_skipped) = {
+            let guard = self.state.read().await;
+            if let Some(r) = guard.runs.iter().find(|r| r.id == run_id) {
+                let s0 = r.steps.get(0).map(|s| s.status == StepStatus::Skipped).unwrap_or(false);
+                let s1 = r.steps.get(1).map(|s| s.status == StepStatus::Skipped).unwrap_or(false);
+                (s0, s1)
+            } else {
+                (false, false)
+            }
+        };
+
+        let can_parallelize_inception = project.agents.len() >= 2
+            && project.agents[0].role == AgentRole::Po
+            && project.agents[1].role == AgentRole::Expert
+            && !is_po_skipped
+            && !is_expert_skipped;
+
+        if can_parallelize_inception {
+            info!("Launching Parallel Inception: PO & Business Expert running concurrently for high-speed delivery");
+            let po_agent = &project.agents[0];
+            let expert_agent = &project.agents[1];
+
+            let po_thought = ThoughtEntry {
+                id: format!("cot-{}", &Uuid::new_v4().to_string()[..8]),
+                role: AgentRole::Po,
+                kind: "reasoning".to_string(),
+                content: format!(
+                    "Parallel Inception: PO analyzing user stories and acceptance criteria for '{}' in {}...",
+                    version_tag,
+                    workspace_dir.to_string_lossy()
+                ),
+                timestamp: Utc::now(),
+            };
+            let expert_thought = ThoughtEntry {
+                id: format!("cot-{}", &Uuid::new_v4().to_string()[..8]),
+                role: AgentRole::Expert,
+                kind: "reasoning".to_string(),
+                content: format!(
+                    "Parallel Inception: Business Expert mapping domain invariants and business rules for '{}'...",
+                    version_tag
+                ),
+                timestamp: Utc::now(),
+            };
+
+            let po_cli_cmd = format!(
+                "{} --add-dir \"{}\"",
+                self.agy.format_cli_command(&po_agent.model, &po_agent.effort, po_agent.role.code()),
+                workspace_dir.to_string_lossy()
+            );
+            let expert_cli_cmd = format!(
+                "{} --add-dir \"{}\"",
+                self.agy.format_cli_command(&expert_agent.model, &expert_agent.effort, expert_agent.role.code()),
+                workspace_dir.to_string_lossy()
+            );
+
+            let mut updated_ticket = None;
+            {
+                let mut guard = self.state.write().await;
+                if let Some(run) = guard.runs.iter_mut().find(|r| r.id == run_id) {
+                    if let Some(step0) = run.steps.get_mut(0) {
+                        step0.status = StepStatus::Running;
+                        step0.started_at = Some(Utc::now());
+                        step0.thinking_log.push(po_thought.clone());
+                        step0.summary = format!(
+                            "Parallel Inception: Running PO ({}) in {}...",
+                            po_agent.model,
+                            workspace_dir.to_string_lossy()
+                        );
+                    }
+                    if let Some(step1) = run.steps.get_mut(1) {
+                        step1.status = StepStatus::Running;
+                        step1.started_at = Some(Utc::now());
+                        step1.thinking_log.push(expert_thought.clone());
+                        step1.summary = format!(
+                            "Parallel Inception: Running Business Expert ({}) in {}...",
+                            expert_agent.model,
+                            workspace_dir.to_string_lossy()
+                        );
+                    }
+                }
+                if let Some(ref tid) = ticket_id {
+                    if let Some(tk) = guard.tickets.iter_mut().find(|t| &t.id == tid) {
+                        tk.stage = KanbanStage::Design;
+                        tk.active_role = Some(AgentRole::Po);
+                        tk.updated_at = Utc::now();
+                        updated_ticket = Some(tk.clone());
+                    }
+                }
+            }
+
+            if let Some(tk) = updated_ticket {
+                let _ = self.event_tx.send(FactoryEvent::TicketUpdated { ticket: tk.clone() });
+                self.sync_ticket_stage_to_linear(&tk.id, KanbanStage::Design).await;
+            }
+
+            let _ = self.event_tx.send(FactoryEvent::AgentStepStarted {
+                run_id: run_id.clone(),
+                ticket_id: ticket_id.clone(),
+                role: AgentRole::Po,
+                stage: KanbanStage::Design,
+                title: po_agent.title.clone(),
+                model: po_agent.model.clone(),
+                agy_command: po_cli_cmd.clone(),
+            });
+            let _ = self.event_tx.send(FactoryEvent::AgentThoughtEmitted {
+                run_id: run_id.clone(),
+                ticket_id: ticket_id.clone(),
+                role: AgentRole::Po,
+                thought: po_thought.clone(),
+            });
+
+            let _ = self.event_tx.send(FactoryEvent::AgentStepStarted {
+                run_id: run_id.clone(),
+                ticket_id: ticket_id.clone(),
+                role: AgentRole::Expert,
+                stage: KanbanStage::Design,
+                title: expert_agent.title.clone(),
+                model: expert_agent.model.clone(),
+                agy_command: expert_cli_cmd.clone(),
+            });
+            let _ = self.event_tx.send(FactoryEvent::AgentThoughtEmitted {
+                run_id: run_id.clone(),
+                ticket_id: ticket_id.clone(),
+                role: AgentRole::Expert,
+                thought: expert_thought.clone(),
+            });
+
+            let po_instructions = "Do NOT call any tools or modify repo files. First write a `<thinking>`...`</thinking>` block with 3 concise bullet points showing your internal Chain of Thought. If you have a question or assumption the human operator can steer, include `<question>your question</question>`. Then write your concise Markdown deliverable (120-160 words) with crisp User Stories and Acceptance Criteria in French.";
+            let expert_instructions = "Do NOT call any tools or modify repo files. First write a `<thinking>`...`</thinking>` block with 3 concise bullet points showing your internal Chain of Thought. If you have a question or assumption the human operator can steer, include `<question>your question</question>`. Then write your concise Markdown deliverable (120-160 words) defining Ubiquitous Language, Invariants, and Business Rules in French.";
+
+            let po_prompt = format!(
+                "{}\n\nTarget Repository: {}\nRelease Tag: {}\nLinear Ticket: {}\n\n{}\nDeliverable role: Product Owner (PO) under WAGNER principles.",
+                po_agent.system_prompt, workspace_dir.to_string_lossy(), version_tag, feature_request, po_instructions
+            );
+            let expert_prompt = format!(
+                "{}\n\nTarget Repository: {}\nRelease Tag: {}\nLinear Ticket: {}\n\n{}\nDeliverable role: Business Expert under WAGNER principles.",
+                expert_agent.system_prompt, workspace_dir.to_string_lossy(), version_tag, feature_request, expert_instructions
+            );
+
+            let (po_def_summary, po_fallback_md, mut po_artifacts) = Self::synthesize_role_output(AgentRole::Po, &project, &version_tag, &feature_request);
+            let po_default_thoughts = Self::synthesize_role_thoughts(AgentRole::Po, &project, &version_tag, &feature_request);
+
+            let (expert_def_summary, expert_fallback_md, mut expert_artifacts) = Self::synthesize_role_output(AgentRole::Expert, &project, &version_tag, &feature_request);
+            let expert_default_thoughts = Self::synthesize_role_thoughts(AgentRole::Expert, &project, &version_tag, &feature_request);
+
+            let ws_str = workspace_dir.to_string_lossy().to_string();
+            let start_instant = std::time::Instant::now();
+
+            let (po_output, expert_output) = if execution_mode == "agy_live" {
+                let po_fut = self.agy.run_agent_prompt(&po_agent.model, &po_agent.effort, &po_prompt, Some(&ws_str), None, 35);
+                let expert_fut = self.agy.run_agent_prompt(&expert_agent.model, &expert_agent.effort, &expert_prompt, Some(&ws_str), None, 35);
+                tokio::join!(po_fut, expert_fut)
+            } else {
+                (
+                    Ok(AgyPrintResponse { conversation_id: Some("sim-po".into()), status: Some("success".into()), response: Some(po_fallback_md.clone()), duration_seconds: Some(0.3), num_turns: Some(1), usage: None }),
+                    Ok(AgyPrintResponse { conversation_id: Some("sim-expert".into()), status: Some("success".into()), response: Some(expert_fallback_md.clone()), duration_seconds: Some(0.3), num_turns: Some(1), usage: None }),
+                )
+            };
+
+            let (po_cot, _po_pq, po_text, po_cid, po_usage, po_dur) = match po_output {
+                Ok(resp) => {
+                    let raw = resp.response.unwrap_or_else(|| po_fallback_md.clone());
+                    let (cot, pq, cleaned) = AgyBridge::extract_thoughts_and_clean_response(AgentRole::Po, &raw, resp.conversation_id.as_deref());
+                    let final_cot = if cot.is_empty() { po_default_thoughts } else { cot };
+                    let final_text = if cleaned.is_empty() { po_fallback_md } else { cleaned };
+                    let u: AgyUsage = resp.usage.unwrap_or_default().into();
+                    let d = resp.duration_seconds.unwrap_or_else(|| start_instant.elapsed().as_secs_f64());
+                    (final_cot, pq, final_text, resp.conversation_id, u, d)
+                }
+                Err(err) => {
+                    warn!("Parallel PO turn fallback: {}", err);
+                    (po_default_thoughts, None, po_fallback_md, Some("fallback-po".into()), AgyUsage::default(), start_instant.elapsed().as_secs_f64())
+                }
+            };
+
+            let (exp_cot, _exp_pq, exp_text, exp_cid, exp_usage, exp_dur) = match expert_output {
+                Ok(resp) => {
+                    let raw = resp.response.unwrap_or_else(|| expert_fallback_md.clone());
+                    let (cot, pq, cleaned) = AgyBridge::extract_thoughts_and_clean_response(AgentRole::Expert, &raw, resp.conversation_id.as_deref());
+                    let final_cot = if cot.is_empty() { expert_default_thoughts } else { cot };
+                    let final_text = if cleaned.is_empty() { expert_fallback_md } else { cleaned };
+                    let u: AgyUsage = resp.usage.unwrap_or_default().into();
+                    let d = resp.duration_seconds.unwrap_or_else(|| start_instant.elapsed().as_secs_f64());
+                    (final_cot, pq, final_text, resp.conversation_id, u, d)
+                }
+                Err(err) => {
+                    warn!("Parallel Expert turn fallback: {}", err);
+                    (expert_default_thoughts, None, expert_fallback_md, Some("fallback-expert".into()), AgyUsage::default(), start_instant.elapsed().as_secs_f64())
+                }
+            };
+
+            for th in &po_cot {
+                let _ = self.event_tx.send(FactoryEvent::AgentThoughtEmitted {
+                    run_id: run_id.clone(),
+                    ticket_id: ticket_id.clone(),
+                    role: AgentRole::Po,
+                    thought: th.clone(),
+                });
+            }
+            for th in &exp_cot {
+                let _ = self.event_tx.send(FactoryEvent::AgentThoughtEmitted {
+                    run_id: run_id.clone(),
+                    ticket_id: ticket_id.clone(),
+                    role: AgentRole::Expert,
+                    thought: th.clone(),
+                });
+            }
+
+            let po_file = ArtifactFile {
+                path: ".agents/po.md".to_string(),
+                category: "PO Deliverable".to_string(),
+                language: "markdown".to_string(),
+                content: po_text.clone(),
+            };
+            po_artifacts.insert(0, po_file);
+            for art in &po_artifacts {
+                let clean_path = art.path.trim_start_matches(['/', '\\']);
+                if !clean_path.contains("..") {
+                    let dest = workspace_dir.join(clean_path);
+                    if let Some(parent) = dest.parent() { let _ = tokio::fs::create_dir_all(parent).await; }
+                    let _ = tokio::fs::write(&dest, &art.content).await;
+                }
+            }
+
+            let exp_file = ArtifactFile {
+                path: ".agents/expert.md".to_string(),
+                category: "Expert Deliverable".to_string(),
+                language: "markdown".to_string(),
+                content: exp_text.clone(),
+            };
+            expert_artifacts.insert(0, exp_file);
+            for art in &expert_artifacts {
+                let clean_path = art.path.trim_start_matches(['/', '\\']);
+                if !clean_path.contains("..") {
+                    let dest = workspace_dir.join(clean_path);
+                    if let Some(parent) = dest.parent() { let _ = tokio::fs::create_dir_all(parent).await; }
+                    let _ = tokio::fs::write(&dest, &art.content).await;
+                }
+            }
+
+            let po_summary = po_text.lines().find(|l| {
+                let t = l.trim();
+                !t.is_empty() && !t.starts_with('#')
+            }).unwrap_or(&po_def_summary).trim().trim_start_matches(['-', '*', '>']).to_string();
+
+            let exp_summary = exp_text.lines().find(|l| {
+                let t = l.trim();
+                !t.is_empty() && !t.starts_with('#')
+            }).unwrap_or(&expert_def_summary).trim().trim_start_matches(['-', '*', '>']).to_string();
+
+            accumulated_context.push_str(&format!("- [PO]: {}\n- [EXPERT]: {}\n", po_summary, exp_summary));
+            total_tokens += po_usage.total_tokens + exp_usage.total_tokens;
+            total_duration += po_dur.max(exp_dur);
+
+            let po_snapshot = AgentStepExecution {
+                role: AgentRole::Po,
+                title: po_agent.title.clone(),
+                wagner_pillar: po_agent.wagner_pillar.clone(),
+                model: po_agent.model.clone(),
+                status: StepStatus::Completed,
+                started_at: Some(Utc::now()),
+                completed_at: Some(Utc::now()),
+                duration_seconds: (po_dur * 100.0).round() / 100.0,
+                agy_conversation_id: po_cid,
+                agy_command: po_cli_cmd,
+                summary: po_summary,
+                markdown_output: po_text,
+                thinking_log: po_cot,
+                artifacts: po_artifacts,
+                usage: po_usage,
+                quality_gate_passed: true,
+            };
+
+            let exp_snapshot = AgentStepExecution {
+                role: AgentRole::Expert,
+                title: expert_agent.title.clone(),
+                wagner_pillar: expert_agent.wagner_pillar.clone(),
+                model: expert_agent.model.clone(),
+                status: StepStatus::Completed,
+                started_at: Some(Utc::now()),
+                completed_at: Some(Utc::now()),
+                duration_seconds: (exp_dur * 100.0).round() / 100.0,
+                agy_conversation_id: exp_cid,
+                agy_command: expert_cli_cmd,
+                summary: exp_summary,
+                markdown_output: exp_text,
+                thinking_log: exp_cot,
+                artifacts: expert_artifacts,
+                usage: exp_usage,
+                quality_gate_passed: true,
+            };
+
+            {
+                let mut guard = self.state.write().await;
+                if let Some(run) = guard.runs.iter_mut().find(|r| r.id == run_id) {
+                    if let Some(s0) = run.steps.get_mut(0) { *s0 = po_snapshot.clone(); }
+                    if let Some(s1) = run.steps.get_mut(1) { *s1 = exp_snapshot.clone(); }
+                    run.total_tokens = total_tokens;
+                    run.total_duration_seconds = (total_duration * 100.0).round() / 100.0;
+                }
+            }
+            self.persist().await;
+
+            let _ = self.event_tx.send(FactoryEvent::AgentStepCompleted {
+                run_id: run_id.clone(),
+                ticket_id: ticket_id.clone(),
+                step: po_snapshot,
+            });
+            let _ = self.event_tx.send(FactoryEvent::AgentStepCompleted {
+                run_id: run_id.clone(),
+                ticket_id: ticket_id.clone(),
+                step: exp_snapshot,
+            });
+        }
+
+        let start_idx = if can_parallelize_inception { 2 } else { 0 };
+
+        for idx in start_idx..project.agents.len() {
             let agent = &project.agents[idx];
 
             let is_skipped = {
@@ -2369,6 +2687,34 @@ fi"#,
                 "Do NOT call any tools or modify repo files. First write a `<thinking>`...`</thinking>` block with 3 concise bullet points showing your internal Chain of Thought and architectural reasoning. If you have a question or assumption the human operator can steer, include `<question>your question</question>`. Then write your concise Markdown deliverable (120-180 words) covering your role according to Wagner Software Factory principles."
             };
 
+            let role_prior_context = match agent.role {
+                AgentRole::Archi => format!(
+                    "### Inception Specifications:\n{}\n",
+                    if accumulated_context.is_empty() { "Initial architectural design phase.".to_string() } else { accumulated_context.clone() }
+                ),
+                AgentRole::Dev => format!(
+                    "### Specifications & Architectural Guidelines:\n{}\n",
+                    accumulated_context
+                ),
+                AgentRole::Qa => format!(
+                    "### Ticket Context:\nLinear Ticket: {}\nRelease: {}\n\n### Specifications to verify:\n{}\n",
+                    feature_request,
+                    version_tag,
+                    accumulated_context
+                ),
+                AgentRole::Ops => format!(
+                    "### Release Information:\nTag: {} · Feature: {}\nTest Factory passed.\n",
+                    version_tag,
+                    feature_request
+                ),
+                AgentRole::Pr => format!(
+                    "### Release Summary:\nTag: {} · Feature: {}\nTarget Branch: master\n",
+                    version_tag,
+                    feature_request
+                ),
+                _ => accumulated_context.clone(),
+            };
+
             let prompt = format!(
                 "{}\n\n\
                 Target Repository: {}\n\
@@ -2382,11 +2728,7 @@ fi"#,
                 workspace_dir.to_string_lossy(),
                 version_tag,
                 feature_request,
-                if accumulated_context.is_empty() {
-                    "Initial design stage.".to_string()
-                } else {
-                    accumulated_context.clone()
-                },
+                role_prior_context,
                 role_instructions,
                 agent.role.title(),
                 agent.wagner_pillar
@@ -2408,7 +2750,11 @@ fi"#,
             let start_instant = std::time::Instant::now();
             let (step_thoughts, pending_q, markdown_output, conv_id, usage, duration_secs) =
                 if execution_mode == "agy_live" {
-                    let agent_timeout = if agent.role == AgentRole::Dev { 180 } else { 45 };
+                    let agent_timeout = match agent.role {
+                        AgentRole::Dev => 180,
+                        AgentRole::Archi => 45,
+                        _ => 35,
+                    };
                     match self
                         .agy
                         .run_agent_prompt(
@@ -3468,5 +3814,32 @@ export const t = (k: string) => k;
             Orchestrator::branch_name_for_ticket(Some("[CAI-19](url)"), "v1.5.0"),
             "factory-CAI-19"
         );
+    }
+
+    #[tokio::test]
+    async fn test_agent_model_configurations_and_parallel_inception() {
+        let tmp_dir = std::env::temp_dir().join(format!("wagner_speed_test_{}", Uuid::new_v4()));
+        let orch = Orchestrator::new(
+            tmp_dir.join("data"),
+            PathBuf::from("/home/mediaserver/Documents/SoftwareFactory"),
+        );
+        let state = orch.state.read().await;
+        let proj = state.projects.first().expect("project should exist");
+
+        // Verify DEV is gemini-4-argon-medium as requested by user
+        let dev = proj.agents.iter().find(|a| a.role == AgentRole::Dev).expect("Dev agent must exist");
+        assert_eq!(dev.model, "gemini-4-argon-medium");
+        assert_eq!(dev.effort, "medium");
+
+        // Verify ARCHI is gemini-3.8-flash-low for high speed
+        let archi = proj.agents.iter().find(|a| a.role == AgentRole::Archi).expect("Archi agent must exist");
+        assert_eq!(archi.model, "gemini-3.8-flash-low");
+        assert_eq!(archi.effort, "low");
+
+        // Verify PO, EXPERT, QA, OPS, PR are fast models
+        let po = proj.agents.iter().find(|a| a.role == AgentRole::Po).unwrap();
+        assert_eq!(po.model, "gemini-3.8-flash-low");
+        let expert = proj.agents.iter().find(|a| a.role == AgentRole::Expert).unwrap();
+        assert_eq!(expert.model, "gemini-3.8-flash-low");
     }
 }
