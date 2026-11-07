@@ -221,17 +221,17 @@ const columns: Array<{
     blueAccent: true,
   },
   {
-    id: 'done',
-    index: 'Stage 5',
-    title: 'Released & Run',
-    subtitle: 'Deployed with rollback runbook',
-  },
-  {
     id: 'pr_review',
-    index: 'Stage 6',
+    index: 'Stage 5',
     title: 'PR & Human Review',
     subtitle: 'GitHub PR against master for review',
     blueAccent: true,
+  },
+  {
+    id: 'done',
+    index: 'Stage 6',
+    title: 'Released & Run',
+    subtitle: 'Deployed with rollback runbook',
   },
 ]
 
@@ -631,6 +631,7 @@ async function handleSaveAgentModels() {
           class="select"
           style="min-width: 240px; font-weight: 600"
         >
+          <option value="all">📂 Tous les projets (All Projects)</option>
           <option
             v-for="lp in store.linearProjects"
             :key="lp.id"

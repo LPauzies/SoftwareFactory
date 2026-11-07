@@ -510,6 +510,7 @@ async fn move_ticket_stage_handler(
         tk.clone()
     };
     orch.persist().await;
+    orch.sync_ticket_stage_to_linear(&updated.id, updated.stage).await;
     let _ = orch.event_tx.send(FactoryEvent::TicketUpdated {
         ticket: updated.clone(),
     });
