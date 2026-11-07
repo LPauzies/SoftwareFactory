@@ -1,4 +1,4 @@
-use crate::models::{FactoryTicket, KanbanStage, LinearProject, LinearStatus};
+use crate::models::{FactoryTicket, KanbanStage, LinearProject, LinearStatus, LinearWorkflowState};
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use serde_json::Value;
@@ -42,6 +42,13 @@ impl LinearClient {
               key
               name
               description
+              states {
+                nodes {
+                  id
+                  name
+                  type
+                }
+              }
             }
           }
           issues(first: 100) {
@@ -196,6 +203,28 @@ impl LinearClient {
             }
         }
 
+        let mut workflow_states = Vec::new();
+        if let Some(nodes) = data.pointer("/teams/nodes").and_then(|v| v.as_array()) {
+            for team_node in nodes {
+                let team_id = team_node.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+                if let Some(state_nodes) = team_node.pointer("/states/nodes").and_then(|v| v.as_array()) {
+                    for sn in state_nodes {
+                        let sid = sn.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+                        let sname = sn.get("name").and_then(|v| v.as_str()).unwrap_or_default();
+                        let stype = sn.get("type").and_then(|v| v.as_str()).unwrap_or_default();
+                        if !sid.is_empty() {
+                            workflow_states.push(LinearWorkflowState {
+                                id: sid.to_string(),
+                                name: sname.to_string(),
+                                state_type: stype.to_string(),
+                                team_id: team_id.to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
         let mut tickets = Vec::new();
         if let Some(nodes) = data.pointer("/issues/nodes").and_then(|v| v.as_array()) {
             for (idx, node) in nodes.iter().enumerate() {
@@ -307,9 +336,109 @@ impl LinearClient {
             organization_name: org_name,
             viewer_name,
             last_synced_at: Some(Utc::now()),
+            workflow_states,
         };
 
         Ok((status, projects, tickets))
+    }
+
+    /// Update an issue's workflow state in Linear (e.g. Backlog -> In Progress -> In Review -> Done).
+    pub async fn update_issue_state(
+        api_key: &str,
+        issue_id: &str,
+        state_id: &str,
+    ) -> Result<bool> {
+        let trimmed = api_key.trim();
+        if trimmed.is_empty() || issue_id.starts_with("ticket-") || state_id.is_empty() {
+            return Ok(false);
+        }
+        let mutation = r#"
+        mutation IssueUpdate($id: String!, $stateId: String!) {
+          issueUpdate(id: $id, input: { stateId: $stateId }) {
+            success
+          }
+        }
+        "#;
+        let payload = serde_json::json!({
+            "query": mutation,
+            "variables": {
+                "id": issue_id,
+                "stateId": state_id
+            }
+        })
+        .to_string();
+
+        let output = Command::new("curl")
+            .arg("-sS")
+            .arg("-X")
+            .arg("POST")
+            .arg("https://api.linear.app/graphql")
+            .arg("-H")
+            .arg("Content-Type: application/json")
+            .arg("-H")
+            .arg(format!("Authorization: {}", trimmed))
+            .arg("-d")
+            .arg(&payload)
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            return Ok(false);
+        }
+        let resp: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or_default();
+        Ok(resp.pointer("/data/issueUpdate/success").and_then(|v| v.as_bool()).unwrap_or(false))
+    }
+
+    /// Resolve the most appropriate Linear stateId for a given team and Kanban stage.
+    pub fn resolve_state_id_for_stage(
+        states: &[LinearWorkflowState],
+        team_id: Option<&str>,
+        stage: KanbanStage,
+    ) -> Option<String> {
+        let candidate_states: Vec<&LinearWorkflowState> = if let Some(tid) = team_id {
+            let filtered: Vec<&LinearWorkflowState> = states.iter().filter(|s| s.team_id == tid).collect();
+            if filtered.is_empty() {
+                states.iter().collect()
+            } else {
+                filtered
+            }
+        } else {
+            states.iter().collect()
+        };
+
+        match stage {
+            KanbanStage::Todo => candidate_states
+                .iter()
+                .find(|s| s.state_type == "unstarted" || s.state_type == "backlog")
+                .or_else(|| candidate_states.iter().find(|s| s.name.eq_ignore_ascii_case("todo") || s.name.eq_ignore_ascii_case("backlog")))
+                .map(|s| s.id.clone()),
+            KanbanStage::Design | KanbanStage::Coding => candidate_states
+                .iter()
+                .find(|s| s.state_type == "started" && !s.name.to_lowercase().contains("review") && !s.name.to_lowercase().contains("revue"))
+                .or_else(|| candidate_states.iter().find(|s| s.state_type == "started"))
+                .or_else(|| candidate_states.iter().find(|s| s.name.to_lowercase().contains("progress") || s.name.to_lowercase().contains("cours")))
+                .map(|s| s.id.clone()),
+            KanbanStage::Testing | KanbanStage::PrReview => candidate_states
+                .iter()
+                .find(|s| {
+                    let lower = s.name.to_lowercase();
+                    lower.contains("review")
+                        || lower.contains("revue")
+                        || lower.split(|c: char| !c.is_alphanumeric()).any(|w| w == "pr" || w == "qa")
+                })
+                .or_else(|| candidate_states.iter().find(|s| s.state_type == "started"))
+                .map(|s| s.id.clone()),
+            KanbanStage::Done => candidate_states
+                .iter()
+                .find(|s| s.state_type == "completed")
+                .or_else(|| candidate_states.iter().find(|s| s.name.eq_ignore_ascii_case("done") || s.name.eq_ignore_ascii_case("terminé")))
+                .map(|s| s.id.clone()),
+            KanbanStage::RolledBack => candidate_states
+                .iter()
+                .find(|s| s.state_type == "canceled")
+                .or_else(|| candidate_states.iter().find(|s| s.name.to_lowercase().contains("cancel")))
+                .map(|s| s.id.clone()),
+        }
     }
 
     /// Post a progress or completion comment on a real Linear issue when an API key is configured.
@@ -390,5 +519,67 @@ impl LinearClient {
             .stderr(Stdio::null())
             .status()
             .await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_state_id_for_stage() {
+        let states = vec![
+            LinearWorkflowState {
+                id: "state-backlog".to_string(),
+                name: "Backlog".to_string(),
+                state_type: "backlog".to_string(),
+                team_id: "team-1".to_string(),
+            },
+            LinearWorkflowState {
+                id: "state-progress".to_string(),
+                name: "In Progress".to_string(),
+                state_type: "started".to_string(),
+                team_id: "team-1".to_string(),
+            },
+            LinearWorkflowState {
+                id: "state-review".to_string(),
+                name: "In Review".to_string(),
+                state_type: "started".to_string(),
+                team_id: "team-1".to_string(),
+            },
+            LinearWorkflowState {
+                id: "state-done".to_string(),
+                name: "Done".to_string(),
+                state_type: "completed".to_string(),
+                team_id: "team-1".to_string(),
+            },
+            LinearWorkflowState {
+                id: "state-canceled".to_string(),
+                name: "Canceled".to_string(),
+                state_type: "canceled".to_string(),
+                team_id: "team-1".to_string(),
+            },
+        ];
+
+        assert_eq!(
+            LinearClient::resolve_state_id_for_stage(&states, Some("team-1"), KanbanStage::Todo),
+            Some("state-backlog".to_string())
+        );
+        assert_eq!(
+            LinearClient::resolve_state_id_for_stage(&states, Some("team-1"), KanbanStage::Coding),
+            Some("state-progress".to_string())
+        );
+        assert_eq!(
+            LinearClient::resolve_state_id_for_stage(&states, Some("team-1"), KanbanStage::PrReview),
+            Some("state-review".to_string())
+        );
+        assert_eq!(
+            LinearClient::resolve_state_id_for_stage(&states, Some("team-1"), KanbanStage::Done),
+            Some("state-done".to_string())
+        );
+        assert_eq!(
+            LinearClient::resolve_state_id_for_stage(&states, Some("team-1"), KanbanStage::RolledBack),
+            Some("state-canceled".to_string())
+        );
     }
 }
