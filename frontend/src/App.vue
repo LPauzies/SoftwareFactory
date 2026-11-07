@@ -1583,27 +1583,6 @@ async function handleSaveAgentModels() {
                   }}
                 </button>
               </div>
-
-              <!-- Agent Deliverable Output -->
-              <div>
-                <div
-                  style="
-                    display: flex;
-                    justify-content: space-between;
-                    margin-bottom: 0.35rem;
-                  "
-                >
-                  <span class="field-label">
-                    Deliverable — {{ activeDrawerStep.role }}
-                  </span>
-                  <span style="font-size: 0.72rem; color: var(--text-muted)">
-                    {{ activeDrawerStep.agy_command }}
-                  </span>
-                </div>
-                <pre class="code-box">{{
-                  activeDrawerStep.markdown_output || activeDrawerStep.summary
-                }}</pre>
-              </div>
             </template>
 
             <!-- ============================================================= -->
