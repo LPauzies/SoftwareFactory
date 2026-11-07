@@ -229,13 +229,43 @@ const columns: Array<{
   },
 ]
 
+function extractTicketNumber(identifier: string): number {
+  const match = identifier.match(/(\d+)\s*$/)
+  return match ? parseInt(match[1], 10) : Number.MAX_SAFE_INTEGER
+}
+
+function compareTicketsByNumberAsc(a: FactoryTicket, b: FactoryTicket): number {
+  const numA = extractTicketNumber(a.identifier)
+  const numB = extractTicketNumber(b.identifier)
+  if (numA !== numB) {
+    return numA - numB
+  }
+  return a.identifier.localeCompare(b.identifier, undefined, { numeric: true })
+}
+
+function formatTicketCreatedAt(tk: FactoryTicket): string {
+  const raw = tk.created_at || tk.updated_at
+  if (!raw) return ''
+  const d = new Date(raw)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleDateString('fr-FR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  })
+}
+
 function ticketsForColumn(colId: KanbanStage): FactoryTicket[] {
   if (colId === 'done') {
-    return store.projectTickets.filter(
-      (t) => t.stage === 'done' || t.stage === 'rolled_back'
-    )
+    return store.projectTickets
+      .filter((t) => t.stage === 'done' || t.stage === 'rolled_back')
+      .slice()
+      .sort(compareTicketsByNumberAsc)
   }
-  return store.projectTickets.filter((t) => t.stage === colId)
+  return store.projectTickets
+    .filter((t) => t.stage === colId)
+    .slice()
+    .sort(compareTicketsByNumberAsc)
 }
 
 function shortRepoPath(path: string): string {
@@ -325,6 +355,12 @@ async function handleRollbackTicket(ticket: FactoryTicket, evt?: Event) {
     ticket,
     `Rollback triggered from WAGNER Kanban card ${ticket.identifier}`
   )
+}
+
+async function handleDeleteTicket(ticket: FactoryTicket, evt?: Event) {
+  if (evt) evt.stopPropagation()
+  if (ticket.stage === 'todo') return
+  await store.deleteTicket(ticket.id)
 }
 
 async function handleCreateTicket() {
@@ -626,17 +662,38 @@ async function handleSaveAgentModels() {
                   {{ tk.version_tag }}
                 </span>
               </div>
-              <span class="prio-badge" :class="tk.priority_label">
-                {{ tk.priority_label }}
-              </span>
+              <div style="display: flex; align-items: center; gap: 0.35rem">
+                <span class="prio-badge" :class="tk.priority_label">
+                  {{ tk.priority_label }}
+                </span>
+                <button
+                  v-if="tk.stage !== 'todo'"
+                  class="btn btn-danger"
+                  style="padding: 0.08rem 0.42rem; font-size: 0.72rem; line-height: 1.1"
+                  title="Supprimer cette carte"
+                  @click="handleDeleteTicket(tk, $event)"
+                >
+                  ×
+                </button>
+              </div>
             </div>
 
             <div class="ticket-title">{{ tk.title }}</div>
             <div class="ticket-desc">{{ tk.description }}</div>
 
-            <!-- Target repository badge -->
-            <div class="repo-tag" :title="tk.repository_path">
-              {{ shortRepoPath(tk.repository_path) }}
+            <!-- Target repository badge & creation date in Backlog -->
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.4rem">
+              <div class="repo-tag" :title="tk.repository_path">
+                {{ shortRepoPath(tk.repository_path) }}
+              </div>
+              <span
+                v-if="tk.stage === 'todo' && formatTicketCreatedAt(tk)"
+                class="mono"
+                style="font-size: 0.68rem; color: var(--text-muted); white-space: nowrap"
+                :title="`Créé le ${formatTicketCreatedAt(tk)}`"
+              >
+                📅 {{ formatTicketCreatedAt(tk) }}
+              </span>
             </div>
 
             <!-- GitHub Pull Request against master badge & link for Human Review -->
@@ -968,7 +1025,17 @@ async function handleSaveAgentModels() {
               {{ store.selectedTicket.description }}
             </p>
           </div>
-          <button class="btn" @click="store.selectedTicketId = null">Close</button>
+          <div style="display: flex; gap: 0.45rem; align-items: center">
+            <button
+              v-if="store.selectedTicket.stage !== 'todo'"
+              class="btn btn-danger"
+              title="Supprimer cette carte"
+              @click="handleDeleteTicket(store.selectedTicket, $event)"
+            >
+              Delete
+            </button>
+            <button class="btn" @click="store.selectedTicketId = null">Close</button>
+          </div>
         </div>
 
         <div class="drawer-body">
