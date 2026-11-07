@@ -332,6 +332,14 @@ function shortRepoPath(path: string): string {
   return `…/${parts.slice(-2).join('/')}`
 }
 
+function shortRoleCode(role: string): string {
+  if (!role) return ''
+  const upper = role.toUpperCase()
+  if (upper === 'EXPERT') return 'EXP'
+  if (upper === 'ARCHI') return 'ARC'
+  return upper
+}
+
 const activeDrawerStep = computed(() => {
   const run = store.selectedTicketRun
   if (!run) return null
@@ -769,101 +777,90 @@ async function handleSaveAgentModels() {
             </div>
 
             <!-- GitHub Pull Request against master badge & link for Human Review -->
-            <div v-if="tk.pr_url" class="pr-review-box" @click.stop>
-              <div class="pr-branch-line mono">
-                {{ store.projectMappings[0]?.default_branch || 'master' }} ← {{ tk.pr_branch || `factory-${tk.identifier}` }}
+            <!-- Only show when ticket is NOT actively running and is in pr_review or done -->
+            <div
+              v-if="!tk.active_role && tk.pr_url && (tk.stage === 'pr_review' || tk.stage === 'done')"
+              class="card-pr-box"
+              @click.stop
+            >
+              <div class="card-pr-branch mono">
+                <span class="branch-icon">⎇</span> {{ tk.pr_branch || `factory-${tk.identifier}` }}
+                <span class="branch-arrow">→</span> {{ store.projectMappings[0]?.default_branch || 'master' }}
               </div>
               <a
                 :href="tk.pr_url"
                 target="_blank"
                 rel="noopener noreferrer"
-                class="btn btn-pr-link"
+                class="btn-pr-action"
               >
-                Review PR on GitHub ↗
+                <span>Review PR on GitHub</span>
+                <span class="pr-arrow">↗</span>
               </a>
             </div>
 
             <!-- Pending Question Alert if Agent asked a question -->
             <div
               v-if="tk.pending_question"
-              class="running-banner"
-              style="
-                border-color: var(--status-warn);
-                background: rgba(240, 178, 50, 0.15);
-                color: var(--status-warn);
-              "
+              class="card-paused-widget"
             >
-              <span>Paused — Question: {{ tk.pending_question }}</span>
+              <div class="paused-widget-top">
+                <span class="paused-icon">⚠</span>
+                <span class="paused-title">En pause — Question</span>
+              </div>
+              <div class="paused-text">“{{ tk.pending_question }}”</div>
             </div>
 
             <!-- Live running agent indicator + Kill button -->
-            <div v-if="tk.active_role" class="running-banner">
-              <span class="running-banner-status">
-                <span
-                  v-if="!tk.pending_question"
-                  class="agent-spinner"
-                  aria-hidden="true"
-                ></span>
-                <span
-                  v-if="!tk.pending_question"
-                  class="running-pulse-dot"
-                  aria-hidden="true"
-                ></span>
-                <span>
-                  {{
-                    tk.pending_question
-                      ? `${tk.active_role} waiting for answer`
-                      : `Running ${tk.active_role}`
-                  }}
-                </span>
-                <span
-                  v-if="!tk.pending_question && ticketActivity(tk).elapsedSeconds > 0"
-                  class="running-elapsed mono"
+            <div v-if="tk.active_role" class="card-running-widget">
+              <div class="running-widget-header">
+                <div class="running-agent-info">
+                  <span class="agent-spinner" aria-hidden="true"></span>
+                  <span class="running-pulse-dot" aria-hidden="true"></span>
+                  <span class="running-role-pill">Agent {{ tk.active_role }}</span>
+                  <span
+                    v-if="ticketActivity(tk).elapsedSeconds > 0"
+                    class="running-live-timer mono"
+                  >
+                    {{ ticketActivity(tk).elapsedSeconds }}s
+                  </span>
+                </div>
+                <button
+                  class="btn-kill-compact"
+                  title="Interrompre l'agent"
+                  @click="handleKillAgent(tk, $event)"
                 >
-                  · {{ ticketActivity(tk).elapsedSeconds }}s
-                </span>
-                <span
-                  v-if="ticketActivity(tk).startedAt"
-                  class="running-started mono"
-                  style="font-size: 0.68rem; opacity: 0.85; margin-left: 0.2rem"
-                  :title="`Agent démarré à ${formatTime(ticketActivity(tk).startedAt)}`"
-                >
-                  (démarré à {{ formatTime(ticketActivity(tk).startedAt) }})
-                </span>
-              </span>
-              <button
-                class="btn btn-danger"
-                style="font-size: 0.7rem; padding: 0.18rem 0.55rem"
-                @click="handleKillAgent(tk, $event)"
-              >
-                Kill Agent
-              </button>
+                  Interrompre
+                </button>
+              </div>
+              <div v-if="ticketActivity(tk).startedAt" class="running-widget-meta mono">
+                <span>🕒 Démarré à {{ formatTime(ticketActivity(tk).startedAt) }}</span>
+              </div>
             </div>
 
-            <!-- Mini Pipeline Steps Tracker on Kanban Card -->
+            <!-- Mini Pipeline Steps Grid (6-step proportional tracker) -->
             <div
               v-if="store.runForTicket(tk)?.steps?.length"
-              class="card-pipeline-timeline"
+              class="card-pipeline-grid"
               :title="`Pipeline ${store.runForTicket(tk)?.version_tag} — ${store.runForTicket(tk)?.total_duration_seconds}s totales`"
             >
               <div
                 v-for="s in store.runForTicket(tk)!.steps"
                 :key="s.role"
-                class="card-pipeline-step"
+                class="card-pipeline-chip"
                 :class="[
                   stepActivity(s).state,
                   { active: tk.active_role === s.role }
                 ]"
                 :title="`${s.role}: ${stepActivity(s).isRunning ? `en cours (${stepActivity(s).elapsedSeconds}s)` : s.duration_seconds > 0 ? `terminé en ${s.duration_seconds}s` : s.status}${s.started_at ? ` · démarré à ${formatTime(s.started_at)}` : ''}`"
               >
-                <span class="step-tag-role">{{ s.role }}</span>
-                <span v-if="stepActivity(s).isRunning" class="step-tag-dur mono">
+                <span class="chip-role">{{ shortRoleCode(s.role) }}</span>
+                <span v-if="stepActivity(s).isRunning" class="chip-status-sub mono">
                   {{ stepActivity(s).elapsedSeconds }}s
                 </span>
-                <span v-else-if="s.status === 'completed' || s.status === 'succeeded'" class="step-tag-dur mono">
-                  {{ s.duration_seconds }}s
+                <span v-else-if="s.status === 'completed' || s.status === 'succeeded'" class="chip-status-sub mono">
+                  {{ s.duration_seconds > 0 ? `${s.duration_seconds}s` : '✓' }}
                 </span>
-                <span v-else-if="stepActivity(s).isCrashed" class="step-tag-dur mono">
+                <span v-else-if="stepActivity(s).isCrashed" class="chip-status-sub">
                   💥
                 </span>
               </div>
@@ -872,43 +869,38 @@ async function handleSaveAgentModels() {
             <!-- Crashed / Failed agent indicator on card -->
             <div
               v-else-if="ticketActivity(tk).isCrashed"
-              class="crashed-banner"
+              class="card-crashed-widget"
               :title="ticketActivity(tk).errorMessage || ''"
             >
-              <span>
-                💥 Agent {{ ticketActivity(tk).failedRole || 'Pipeline' }} planté / échoué
-              </span>
+              <div class="crashed-widget-left">
+                <span class="crashed-icon">💥</span>
+                <span class="crashed-label">Agent {{ ticketActivity(tk).failedRole || 'Pipeline' }} planté</span>
+              </div>
               <button
-                class="btn btn-launch"
-                style="width: auto; margin-top: 0; font-size: 0.68rem; padding: 0.16rem 0.5rem"
+                class="btn-retry-compact"
                 @click="handleQuickLaunch(tk, $event)"
               >
-                Retry
+                🔄 Relancer
               </button>
             </div>
 
             <!-- Queued in FIFO execution queue indicator -->
-            <div v-else-if="isTicketQueued(tk)" class="running-banner">
-              <span>⏳ Queued · waiting for active task</span>
+            <div v-else-if="isTicketQueued(tk)" class="card-queued-widget">
+              <span class="queued-text">⏳ En file d'attente...</span>
               <button
-                class="btn btn-danger"
-                style="font-size: 0.7rem; padding: 0.18rem 0.55rem"
+                class="btn-kill-compact"
                 @click="handleKillAgent(tk, $event)"
               >
-                Cancel
+                Annuler
               </button>
             </div>
 
             <!-- Rolled back indicator -->
             <div
               v-else-if="tk.stage === 'rolled_back'"
-              style="
-                font-size: 0.74rem;
-                color: var(--status-danger);
-                font-weight: 600;
-              "
+              class="card-rolled-back-badge"
             >
-              Rolled back by Ops agent
+              ⚠ Rolled back par l'agent OPS
             </div>
 
             <!-- Card Action Buttons -->

@@ -607,6 +607,243 @@ code, pre {
   border: 1px solid var(--status-ok);
 }
 
+.card-pr-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.42rem 0.6rem;
+  border-radius: 6px;
+  background: rgba(35, 165, 90, 0.08);
+  border: 1px solid rgba(35, 165, 90, 0.3);
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.card-pr-box:hover {
+  border-color: rgba(35, 165, 90, 0.55);
+  background: rgba(35, 165, 90, 0.12);
+}
+
+.card-pr-branch {
+  font-size: 0.68rem;
+  color: #86efac;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-pr-branch .branch-icon {
+  font-size: 0.76rem;
+  opacity: 0.9;
+}
+
+.card-pr-branch .branch-arrow {
+  color: var(--text-muted);
+}
+
+.btn-pr-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.28rem 0.55rem;
+  border-radius: 5px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #ffffff;
+  background: rgba(35, 165, 90, 0.35);
+  border: 1px solid rgba(35, 165, 90, 0.6);
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-pr-action:hover {
+  background: var(--status-ok);
+  border-color: var(--status-ok);
+  box-shadow: 0 2px 8px rgba(35, 165, 90, 0.3);
+}
+
+.btn-pr-action .pr-arrow {
+  font-size: 0.8rem;
+  transition: transform 0.15s ease;
+}
+
+.btn-pr-action:hover .pr-arrow {
+  transform: translate(2px, -2px);
+}
+
+.card-running-widget {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  padding: 0.42rem 0.6rem;
+  border-radius: 6px;
+  background: linear-gradient(135deg, rgba(88, 101, 242, 0.14) 0%, rgba(0, 168, 252, 0.1) 100%);
+  border: 1px solid rgba(88, 101, 242, 0.4);
+  box-shadow: 0 2px 8px rgba(88, 101, 242, 0.15);
+}
+
+.running-widget-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.running-agent-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.running-role-pill {
+  font-weight: 700;
+  font-size: 0.74rem;
+  color: #e0e7ff;
+  white-space: nowrap;
+}
+
+.running-live-timer {
+  background: rgba(0, 168, 252, 0.18);
+  border: 1px solid rgba(0, 168, 252, 0.4);
+  color: #38bdf8;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.08rem 0.35rem;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.btn-kill-compact {
+  background: rgba(242, 63, 67, 0.15);
+  border: 1px solid rgba(242, 63, 67, 0.4);
+  color: #fca5a5;
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 0.18rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.btn-kill-compact:hover {
+  background: var(--status-danger);
+  border-color: var(--status-danger);
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(242, 63, 67, 0.3);
+}
+
+.running-widget-meta {
+  font-size: 0.66rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.card-crashed-widget {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  background: rgba(242, 63, 67, 0.12);
+  border: 1px solid rgba(242, 63, 67, 0.4);
+  border-left: 3px solid var(--status-danger);
+}
+
+.crashed-widget-left {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #fca5a5;
+}
+
+.btn-retry-compact {
+  background: rgba(242, 63, 67, 0.22);
+  border: 1px solid var(--status-danger);
+  color: #ffffff;
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 0.18rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-retry-compact:hover {
+  background: var(--status-danger);
+  box-shadow: 0 2px 6px rgba(242, 63, 67, 0.4);
+}
+
+.card-queued-widget {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  padding: 0.38rem 0.6rem;
+  border-radius: 6px;
+  background: rgba(0, 168, 252, 0.1);
+  border: 1px solid rgba(0, 168, 252, 0.3);
+}
+
+.card-queued-widget .queued-text {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #7dd3fc;
+}
+
+.card-paused-widget {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  background: rgba(240, 178, 50, 0.12);
+  border: 1px solid rgba(240, 178, 50, 0.4);
+}
+
+.paused-widget-top {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #fde047;
+}
+
+.paused-text {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-rolled-back-badge {
+  font-size: 0.72rem;
+  color: var(--status-danger);
+  font-weight: 600;
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  background: rgba(242, 63, 67, 0.1);
+  border: 1px solid rgba(242, 63, 67, 0.25);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
 .pr-branch-line {
   font-size: 0.7rem;
   color: var(--text-primary);
@@ -929,7 +1166,112 @@ code, pre {
   animation-delay: 0.4s;
 }
 
-/* Card Pipeline Mini-Timeline */
+/* Card Pipeline Mini-Timeline & Proportional 6-Step Grid */
+.card-pipeline-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 3px;
+  margin-top: 0.35rem;
+  padding: 3px;
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.card-pipeline-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 0.22rem 0.1rem;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  min-width: 0;
+  text-align: center;
+  transition: all 0.15s ease;
+}
+
+.card-pipeline-chip .chip-role {
+  font-size: 0.63rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  line-height: 1;
+}
+
+.card-pipeline-chip .chip-status-sub {
+  font-size: 0.58rem;
+  line-height: 1;
+  opacity: 0.85;
+}
+
+.card-pipeline-chip.completed {
+  background: rgba(35, 165, 90, 0.12);
+  border-color: rgba(35, 165, 90, 0.35);
+  color: #86efac;
+}
+
+.card-pipeline-chip.completed .chip-role {
+  color: #86efac;
+}
+
+.card-pipeline-chip.completed .chip-status-sub {
+  color: #a7f3d0;
+}
+
+.card-pipeline-chip.running {
+  background: rgba(88, 101, 242, 0.25);
+  border-color: var(--accent-blue);
+  color: #38bdf8;
+  box-shadow: 0 0 6px rgba(0, 168, 252, 0.35);
+  animation: chip-running-pulse 1.8s ease-in-out infinite;
+}
+
+.card-pipeline-chip.running .chip-role {
+  color: #ffffff;
+}
+
+.card-pipeline-chip.running .chip-status-sub {
+  color: #67e8f9;
+  font-weight: 700;
+}
+
+.card-pipeline-chip.crashed {
+  background: rgba(242, 63, 67, 0.18);
+  border-color: var(--status-danger);
+  color: #fca5a5;
+}
+
+.card-pipeline-chip.crashed .chip-role {
+  color: #fca5a5;
+}
+
+.card-pipeline-chip.waiting {
+  background: rgba(240, 178, 50, 0.18);
+  border-color: var(--status-warn);
+  color: #fde047;
+}
+
+.card-pipeline-chip.waiting .chip-role {
+  color: #fde047;
+}
+
+.card-pipeline-chip.skipped {
+  opacity: 0.35;
+}
+
+@keyframes chip-running-pulse {
+  0%, 100% {
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 4px rgba(88, 101, 242, 0.3);
+  }
+  50% {
+    border-color: var(--accent-blue);
+    box-shadow: 0 0 10px rgba(0, 168, 252, 0.5);
+  }
+}
+
 .card-pipeline-timeline {
   display: flex;
   align-items: center;
