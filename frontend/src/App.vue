@@ -656,12 +656,7 @@ async function handleSaveAgentModels() {
             @click="store.selectedTicketId = tk.id"
           >
             <div class="ticket-top">
-              <div style="display: flex; align-items: center; gap: 0.45rem">
-                <span class="ticket-id">{{ tk.identifier }}</span>
-                <span class="mono" style="font-size: 0.68rem; color: var(--text-muted)">
-                  {{ tk.version_tag }}
-                </span>
-              </div>
+              <span class="ticket-id">{{ tk.identifier }}</span>
               <div style="display: flex; align-items: center; gap: 0.35rem">
                 <span class="prio-badge" :class="tk.priority_label">
                   {{ tk.priority_label }}
@@ -1016,7 +1011,6 @@ async function handleSaveAgentModels() {
               <span class="prio-badge" :class="store.selectedTicket.priority_label">
                 {{ store.selectedTicket.priority_label }}
               </span>
-              <span class="tag-box mono">{{ store.selectedTicket.version_tag }}</span>
             </div>
             <h2 style="font-size: 1.05rem; margin-top: 0.35rem; font-weight: 700">
               {{ store.selectedTicket.title }}
