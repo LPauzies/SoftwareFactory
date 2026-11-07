@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use tokio::task::AbortHandle;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 pub struct Orchestrator {
@@ -1118,7 +1118,7 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                 (
                     "conclusion",
                     format!(
-                        "Committed tests/bdd_{}.feature as living documentation.",
+                        "Synthesized BDD scenarios in memory for living documentation for {}.",
                         version.replace('.', "_")
                     ),
                 ),
@@ -1138,7 +1138,7 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                 (
                     "conclusion",
                     format!(
-                        "Generated ops/pipeline_{}.yml, auto-compiled Release Notes, and armed instant rollback hook.",
+                        "Armed CI/CD release hooks and instant rollback for {}.",
                         version.replace('.', "_")
                     ),
                 ),
@@ -1300,7 +1300,7 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                     feature_request, version, version, version
                 );
                 let artifact = ArtifactFile {
-                    path: format!("specs/backlog_{}.md", version),
+                    path: format!(".agents/backlog_{}.md", version),
                     category: "Spec (PO)".to_string(),
                     language: "markdown".to_string(),
                     content: md.clone(),
@@ -1320,7 +1320,7 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                     feature_request
                 );
                 let artifact = ArtifactFile {
-                    path: format!("specs/domain_rules_{}.md", version),
+                    path: format!(".agents/domain_rules_{}.md", version),
                     category: "Domain (EXPERT)".to_string(),
                     language: "markdown".to_string(),
                     content: md.clone(),
@@ -1340,7 +1340,7 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                     version, feature_request, project.repository_path
                 );
                 let artifact = ArtifactFile {
-                    path: format!("docs/adr_{}.md", version),
+                    path: format!(".agents/adr_{}.md", version),
                     category: "Architecture (ARCHI)".to_string(),
                     language: "markdown".to_string(),
                     content: md.clone(),
@@ -1381,7 +1381,7 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                     gherkin
                 );
                 let artifact = ArtifactFile {
-                    path: format!("tests/bdd_{}.feature", version.replace('.', "_")),
+                    path: format!(".agents/bdd_{}.feature", version.replace('.', "_")),
                     category: "Test Factory (QA)".to_string(),
                     language: "gherkin".to_string(),
                     content: gherkin,
@@ -1397,14 +1397,14 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                     "# WAGNER Software Factory — CI/CD & Rollback Pipeline ({})\n\
                     stages: [scm_guard, build, test_factory, deploy_prod, rollback_ready]\n\n\
                     deploy_production:\n\
-                      stage: deploy_prod\n\
-                      script:\n\
-                        - ./ops/deploy.sh --version {}\n\n\
+                    stage: deploy_prod\n\
+                    script:\n\
+                        - echo 'Deploying release {}'\n\n\
                     rollback_on_alert:\n\
-                      stage: rollback_ready\n\
-                      when: on_failure\n\
-                      script:\n\
-                        - ./ops/rollback_{}.sh\n",
+                    stage: rollback_ready\n\
+                    when: on_failure\n\
+                    script:\n\
+                        - echo 'Rolling back {}'\n",
                     version, version, version.replace('.', "_")
                 );
                 let md = format!(
@@ -1413,7 +1413,7 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                     cicd
                 );
                 let artifact = ArtifactFile {
-                    path: format!("ops/pipeline_{}.yml", version.replace('.', "_")),
+                    path: format!(".agents/pipeline_{}.yml", version.replace('.', "_")),
                     category: "CI/CD & Rollback (OPS)".to_string(),
                     language: "yaml".to_string(),
                     content: cicd,
@@ -2587,14 +2587,9 @@ fi"#,
                 content: po_text.clone(),
             };
             po_artifacts.insert(0, po_file);
-            for art in &po_artifacts {
-                let clean_path = art.path.trim_start_matches(['/', '\\']);
-                if !clean_path.contains("..") {
-                    let dest = workspace_dir.join(clean_path);
-                    if let Some(parent) = dest.parent() { let _ = tokio::fs::create_dir_all(parent).await; }
-                    let _ = tokio::fs::write(&dest, &art.content).await;
-                }
-            }
+            let po_dest = workspace_dir.join(".agents/po.md");
+            if let Some(parent) = po_dest.parent() { let _ = tokio::fs::create_dir_all(parent).await; }
+            let _ = tokio::fs::write(&po_dest, &po_text).await;
 
             let exp_file = ArtifactFile {
                 path: ".agents/expert.md".to_string(),
@@ -2603,14 +2598,9 @@ fi"#,
                 content: exp_text.clone(),
             };
             expert_artifacts.insert(0, exp_file);
-            for art in &expert_artifacts {
-                let clean_path = art.path.trim_start_matches(['/', '\\']);
-                if !clean_path.contains("..") {
-                    let dest = workspace_dir.join(clean_path);
-                    if let Some(parent) = dest.parent() { let _ = tokio::fs::create_dir_all(parent).await; }
-                    let _ = tokio::fs::write(&dest, &art.content).await;
-                }
-            }
+            let exp_dest = workspace_dir.join(".agents/expert.md");
+            if let Some(parent) = exp_dest.parent() { let _ = tokio::fs::create_dir_all(parent).await; }
+            let _ = tokio::fs::write(&exp_dest, &exp_text).await;
 
             let po_summary = po_text.lines().find(|l| {
                 let t = l.trim();
@@ -2689,6 +2679,7 @@ fi"#,
 
         let start_idx = if can_parallelize_inception { 2 } else { 0 };
         let mut has_real_code_changes = false;
+        let mut dev_fatal_error = false;
 
         for idx in start_idx..project.agents.len() {
             let agent = &project.agents[idx];
@@ -2853,9 +2844,9 @@ fi"#,
             let (step_thoughts, pending_q, markdown_output, conv_id, usage, duration_secs) =
                 if execution_mode == "agy_live" {
                     let agent_timeout = match agent.role {
-                        AgentRole::Dev => 180,
-                        AgentRole::Archi => 45,
-                        _ => 35,
+                        AgentRole::Dev => 420, // 7 minutes for DEV so complex coding tasks have plenty of time
+                        AgentRole::Archi => 60,
+                        _ => 45,
                     };
                     match self
                         .agy
@@ -2898,34 +2889,66 @@ fi"#,
                             (final_cot, pq, final_text, resp.conversation_id, u, d)
                         }
                         Err(err) => {
-                            warn!(
-                                "agy subprocess fallback for role {}: {}",
-                                agent.role.code(),
-                                err
-                            );
-                            for th in &default_thoughts {
-                                tokio::time::sleep(std::time::Duration::from_millis(160)).await;
+                            if agent.role == AgentRole::Dev {
+                                error!(
+                                    "FATAL: DEV agent failed in agy_live mode (duration: {:.2}s): {}. STRICT QUALITY POLICY: Fallback is strictly forbidden for the DEV role.",
+                                    start_instant.elapsed().as_secs_f64(),
+                                    err
+                                );
+                                let fatal_thought = ThoughtEntry {
+                                    id: format!("cot-{}", &Uuid::new_v4().to_string()[..8]),
+                                    role: AgentRole::Dev,
+                                    kind: "error".to_string(),
+                                    content: format!(
+                                        "FATAL DEV FAILURE: Subprocess failed or timed out ({}). Code was NOT written. Pipeline will halt immediately.",
+                                        err
+                                    ),
+                                    timestamp: Utc::now(),
+                                };
                                 let _ = self.event_tx.send(FactoryEvent::AgentThoughtEmitted {
                                     run_id: run_id.clone(),
                                     ticket_id: ticket_id.clone(),
-                                    role: agent.role,
-                                    thought: th.clone(),
+                                    role: AgentRole::Dev,
+                                    thought: fatal_thought.clone(),
                                 });
+                                (
+                                    vec![fatal_thought],
+                                    None,
+                                    format!("### ⛔ DEV Agent Execution Failed\n\n**Error**: {}\n\n*Strict Quality Policy*: Wagner Software Factory strictly forbids synthetic fallbacks for the DEV role. If the DEV agent fails or exceeds the timeout, the pipeline halts immediately to avoid opening dummy pull requests without real source code.", err),
+                                    Some("agy-failed-dev".to_string()),
+                                    AgyUsage::default(),
+                                    start_instant.elapsed().as_secs_f64(),
+                                )
+                            } else {
+                                warn!(
+                                    "agy subprocess fallback for role {}: {}",
+                                    agent.role.code(),
+                                    err
+                                );
+                                for th in &default_thoughts {
+                                    tokio::time::sleep(std::time::Duration::from_millis(160)).await;
+                                    let _ = self.event_tx.send(FactoryEvent::AgentThoughtEmitted {
+                                        run_id: run_id.clone(),
+                                        ticket_id: ticket_id.clone(),
+                                        role: agent.role,
+                                        thought: th.clone(),
+                                    });
+                                }
+                                (
+                                    default_thoughts,
+                                    None,
+                                    fallback_md,
+                                    Some(format!("agy-fallback-{}", agent.role.code().to_lowercase())),
+                                    AgyUsage {
+                                        input_tokens: 1850,
+                                        output_tokens: 340,
+                                        thinking_tokens: 140,
+                                        cache_read_tokens: 0,
+                                        total_tokens: 2330,
+                                    },
+                                    start_instant.elapsed().as_secs_f64(),
+                                )
                             }
-                            (
-                                default_thoughts,
-                                None,
-                                fallback_md,
-                                Some(format!("agy-fallback-{}", agent.role.code().to_lowercase())),
-                                AgyUsage {
-                                    input_tokens: 1850,
-                                    output_tokens: 340,
-                                    thinking_tokens: 140,
-                                    cache_read_tokens: 0,
-                                    total_tokens: 2330,
-                                },
-                                start_instant.elapsed().as_secs_f64(),
-                            )
                         }
                     }
                 } else {
@@ -2983,9 +3006,18 @@ fi"#,
             artifacts.insert(0, role_md_file);
 
             // Physically write all generated artifacts to disk in the target workspace directory!
+            // STRICT FILTER: NEVER write useless markdown/yaml/feature files to ops/, specs/, docs/, or tests/!
             for art in &artifacts {
                 let clean_path = art.path.trim_start_matches(['/', '\\']);
-                if clean_path.contains("..") || clean_path.starts_with("src/feature_") {
+                if clean_path.contains("..")
+                    || clean_path.starts_with("src/feature_")
+                    || clean_path.starts_with("ops/")
+                    || clean_path.starts_with("specs/")
+                    || clean_path.starts_with("docs/")
+                    || clean_path.starts_with("tests/")
+                    || clean_path.ends_with(".feature")
+                    || clean_path.ends_with(".yml")
+                {
                     continue;
                 }
                 let dest = workspace_dir.join(clean_path);
@@ -3006,14 +3038,19 @@ fi"#,
 
             // If this is the DEV role, stage all source code modifications and verify that real production code was changed
             if agent.role == AgentRole::Dev {
-                let commit_slug = ticket_identifier.as_deref().unwrap_or("WAGNER");
-                let dev_commit_script = format!(
-                    r#"cd "{ws}" 2>/dev/null || exit 0
+                if conv_id.as_deref() == Some("agy-failed-dev") {
+                    step_quality_gate = false;
+                    dev_fatal_error = true;
+                    warn!("QUALITY GATE REJECTED: DEV agent subprocess failed or timed out! Halting pipeline.");
+                } else {
+                    let commit_slug = ticket_identifier.as_deref().unwrap_or("WAGNER");
+                    let dev_commit_script = format!(
+                        r#"cd "{ws}" 2>/dev/null || exit 0
 if [ ! -d .git ] && [ -d ../.git ]; then cd ..; fi
 if [ -d .git ]; then
   git add -A
-  # Quality Gate: check if any real code file (non-markdown, outside of .agents/, docs/, specs/, .github/) is modified
-  REAL_CODE_FILES=$(git diff --cached --name-only 2>/dev/null | grep -vE '^\.agents/|^docs/|^specs/|^\.github/|\.md$|\.txt$' || true)
+  # Quality Gate: check if any real code file (non-markdown, outside of .agents/, docs/, specs/, ops/, tests/, .github/) is modified
+  REAL_CODE_FILES=$(git diff --cached --name-only 2>/dev/null | grep -vE '^\.agents/|^docs/|^specs/|^ops/|^tests/|^\.github/|\.md$|\.txt$|\.yml$|\.feature$' || true)
   if [ -n "$REAL_CODE_FILES" ]; then
     git -c user.name="WAGNER Dev Agent" -c user.email="wagner-dev@softwarefactory.local" commit -m "feat({slug}): implement source code changes for {ver}" || true
     echo "COMMITTED_REAL_CODE"
@@ -3022,56 +3059,58 @@ if [ -d .git ]; then
     echo "NO_REAL_CODE_FOUND"
   fi
 fi"#,
-                    ws = workspace_dir.to_string_lossy(),
-                    slug = commit_slug,
-                    ver = version_tag,
-                );
-                if let Ok(out) = tokio::process::Command::new("bash")
-                    .arg("-c")
-                    .arg(&dev_commit_script)
-                    .output()
-                    .await
-                {
-                    let s = String::from_utf8_lossy(&out.stdout);
-                    if s.contains("COMMITTED_REAL_CODE") {
-                        has_real_code_changes = true;
-                        info!("DEV agent successfully executed git add & git commit for real source code on feature branch:\n{}", s);
-                        let dev_git_cot = ThoughtEntry {
-                            id: format!("cot-{}", &Uuid::new_v4().to_string()[..8]),
-                            role: AgentRole::Dev,
-                            kind: "tool_probe".to_string(),
-                            content: format!(
-                                "Quality Gate PASS: Real source code files modified and committed (`git add -A && git commit -m 'feat({}): ...'`).",
-                                commit_slug
-                            ),
-                            timestamp: Utc::now(),
-                        };
-                        let _ = self.event_tx.send(FactoryEvent::AgentThoughtEmitted {
-                            run_id: run_id.clone(),
-                            ticket_id: ticket_id.clone(),
-                            role: AgentRole::Dev,
-                            thought: dev_git_cot.clone(),
-                        });
-                        step_thoughts.push(dev_git_cot);
-                    } else {
-                        // NO REAL CODE COMMITTED! Fail the quality gate!
-                        step_quality_gate = false;
-                        warn!("QUALITY GATE REJECTED: DEV agent produced no source code modifications (only markdown found)!");
-                        let gate_err_cot = ThoughtEntry {
-                            id: format!("cot-{}", &Uuid::new_v4().to_string()[..8]),
-                            role: AgentRole::Dev,
-                            kind: "warning".to_string(),
-                            content: "QUALITY GATE REJECTED: No real source code was modified. Wagner strictly forbids merging markdown-only deliveries that do not contain actual code. Ticket delivery rejected.".to_string(),
-                            timestamp: Utc::now(),
-                        };
-                        let _ = self.event_tx.send(FactoryEvent::AgentThoughtEmitted {
-                            run_id: run_id.clone(),
-                            ticket_id: ticket_id.clone(),
-                            role: AgentRole::Dev,
-                            thought: gate_err_cot.clone(),
-                        });
-                        step_thoughts.push(gate_err_cot);
-                        markdown_output.push_str("\n\n> ⛔ **Quality Gate Rejected**: No real source code was modified in the repository. Pull Request creation blocked to avoid merging markdown-only changes.\n");
+                        ws = workspace_dir.to_string_lossy(),
+                        slug = commit_slug,
+                        ver = version_tag,
+                    );
+                    if let Ok(out) = tokio::process::Command::new("bash")
+                        .arg("-c")
+                        .arg(&dev_commit_script)
+                        .output()
+                        .await
+                    {
+                        let s = String::from_utf8_lossy(&out.stdout);
+                        if s.contains("COMMITTED_REAL_CODE") {
+                            has_real_code_changes = true;
+                            info!("DEV agent successfully executed git add & git commit for real source code on feature branch:\n{}", s);
+                            let dev_git_cot = ThoughtEntry {
+                                id: format!("cot-{}", &Uuid::new_v4().to_string()[..8]),
+                                role: AgentRole::Dev,
+                                kind: "tool_probe".to_string(),
+                                content: format!(
+                                    "Quality Gate PASS: Real source code files modified and committed (`git add -A && git commit -m 'feat({}): ...'`).",
+                                    commit_slug
+                                ),
+                                timestamp: Utc::now(),
+                            };
+                            let _ = self.event_tx.send(FactoryEvent::AgentThoughtEmitted {
+                                run_id: run_id.clone(),
+                                ticket_id: ticket_id.clone(),
+                                role: AgentRole::Dev,
+                                thought: dev_git_cot.clone(),
+                            });
+                            step_thoughts.push(dev_git_cot);
+                        } else {
+                            // NO REAL CODE COMMITTED! Fail the quality gate!
+                            step_quality_gate = false;
+                            dev_fatal_error = true;
+                            warn!("QUALITY GATE REJECTED: DEV agent produced no source code modifications (only markdown found)!");
+                            let gate_err_cot = ThoughtEntry {
+                                id: format!("cot-{}", &Uuid::new_v4().to_string()[..8]),
+                                role: AgentRole::Dev,
+                                kind: "warning".to_string(),
+                                content: "QUALITY GATE REJECTED: No real source code was modified. Wagner strictly forbids merging markdown-only deliveries that do not contain actual code. Ticket delivery rejected.".to_string(),
+                                timestamp: Utc::now(),
+                            };
+                            let _ = self.event_tx.send(FactoryEvent::AgentThoughtEmitted {
+                                run_id: run_id.clone(),
+                                ticket_id: ticket_id.clone(),
+                                role: AgentRole::Dev,
+                                thought: gate_err_cot.clone(),
+                            });
+                            step_thoughts.push(gate_err_cot);
+                            markdown_output.push_str("\n\n> ⛔ **Quality Gate Rejected**: No real source code was modified in the repository. Pull Request creation blocked to avoid merging markdown-only changes.\n");
+                        }
                     }
                 }
             }
@@ -3295,10 +3334,64 @@ fi"#,
                     step: step_snapshot,
                 });
             }
+
+            // If the DEV role failed, timed out, or produced zero real code modifications:
+            // HALT THE PIPELINE IMMEDIATELY to prevent opening fake PRs or running downstream steps!
+            if agent.role == AgentRole::Dev && (dev_fatal_error || !has_real_code_changes) {
+                error!("Halting pipeline execution immediately because DEV role failed, timed out, or produced no real code modifications.");
+                break;
+            }
         }
 
-        // Remove from active_tasks once all steps finish
+        // Remove from active_tasks once all steps finish (or upon early failure)
         self.active_tasks.write().await.remove(&run_id);
+
+        if dev_fatal_error || !has_real_code_changes {
+            warn!("Pipeline {} aborted: Quality Gate rejected run (DEV failure or zero code changes).", run_id);
+            let (failed_run, failed_ticket) = {
+                let mut guard = self.state.write().await;
+                let mut tk_clone = None;
+                if let Some(ref tid) = ticket_id {
+                    if let Some(tk) = guard.tickets.iter_mut().find(|t| &t.id == tid) {
+                        tk.stage = KanbanStage::Coding;
+                        tk.active_role = None;
+                        tk.updated_at = Utc::now();
+                        tk_clone = Some(tk.clone());
+                    }
+                }
+                let mut run_clone = None;
+                if let Some(run) = guard.runs.iter_mut().find(|r| r.id == run_id) {
+                    run.status = PipelineStatus::Failed;
+                    run.completed_at = Some(Utc::now());
+                    run.total_tokens = total_tokens;
+                    run.total_duration_seconds = (total_duration * 100.0).round() / 100.0;
+                    run_clone = Some(run.clone());
+                }
+                (run_clone, tk_clone)
+            };
+            self.persist().await;
+
+            if let Some(tk) = failed_ticket {
+                let _ = self.event_tx.send(FactoryEvent::TicketUpdated { ticket: tk });
+            }
+
+            if let Some(ref tid) = ticket_id {
+                let key_opt = self.linear_api_key.read().await.clone();
+                if let Some(api_key) = key_opt {
+                    let reject_msg = "⛔ **[WAGNER Quality Gate]** Pipeline Failed: Le dev agent a échoué, a dépassé son timeout ou n'a modifié aucun code source réel. Le pipeline a été interrompu immédiatement pour empêcher tout commit ou PR factice.";
+                    LinearClient::post_issue_comment(&api_key, tid, reject_msg).await;
+                }
+            }
+
+            if let Some(run) = failed_run {
+                let _ = self.event_tx.send(FactoryEvent::PipelineCompleted {
+                    run,
+                    ticket: None,
+                    release: None,
+                });
+            }
+            return;
+        }
 
         // Safety net: Even if the PR step was skipped or the project was loaded from a 6-agent config,
         // ALWAYS generate the Git branch against `main` and the GitHub Pull Request link so the ticket transitions to `PR & Human Review`!
@@ -4121,5 +4214,30 @@ let test = 123;
             note.contains("Rejected") || note.contains("BLOCKED"),
             "Note must clearly state that PR was rejected due to lack of code changes"
         );
+    }
+
+    #[test]
+    fn test_synthesize_role_output_never_produces_docs_ops_specs_paths() {
+        let tmp_dir = std::env::temp_dir().join(format!("wagner_clean_paths_{}", Uuid::new_v4()));
+        let orch = Orchestrator::new(tmp_dir.join("data"), tmp_dir.clone());
+        let proj = orch.state.try_read().unwrap().projects[0].clone();
+
+        for role in [
+            AgentRole::Po,
+            AgentRole::Expert,
+            AgentRole::Archi,
+            AgentRole::Dev,
+            AgentRole::Qa,
+            AgentRole::Ops,
+            AgentRole::Pr,
+        ] {
+            let (_, _, artifacts) = Orchestrator::synthesize_role_output(role, &proj, "v2.0.0", "Test Clean Paths");
+            for art in artifacts {
+                assert!(!art.path.starts_with("docs/"), "Artifact must not start with docs/: {}", art.path);
+                assert!(!art.path.starts_with("ops/"), "Artifact must not start with ops/: {}", art.path);
+                assert!(!art.path.starts_with("specs/"), "Artifact must not start with specs/: {}", art.path);
+                assert!(!art.path.starts_with("tests/"), "Artifact must not start with tests/: {}", art.path);
+            }
+        }
     }
 }
