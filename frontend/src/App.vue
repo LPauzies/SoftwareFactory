@@ -853,7 +853,14 @@ async function handleSaveAgentModels() {
                 ]"
                 :title="`${s.role}: ${stepActivity(s).isRunning ? `en cours (${stepActivity(s).elapsedSeconds}s)` : s.duration_seconds > 0 ? `terminé en ${s.duration_seconds}s` : s.status}${s.started_at ? ` · démarré à ${formatTime(s.started_at)}` : ''}`"
               >
-                <span class="chip-role">{{ shortRoleCode(s.role) }}</span>
+                <span class="chip-role">
+                  <span
+                    v-if="stepActivity(s).isRunning"
+                    class="running-pulse-dot chip-pulse-dot"
+                    aria-hidden="true"
+                  ></span>
+                  {{ shortRoleCode(s.role) }}
+                </span>
                 <span v-if="stepActivity(s).isRunning" class="chip-status-sub mono">
                   {{ stepActivity(s).elapsedSeconds }}s
                 </span>
@@ -868,7 +875,7 @@ async function handleSaveAgentModels() {
 
             <!-- Crashed / Failed agent indicator on card -->
             <div
-              v-else-if="ticketActivity(tk).isCrashed"
+              v-if="ticketActivity(tk).isCrashed"
               class="card-crashed-widget"
               :title="ticketActivity(tk).errorMessage || ''"
             >
@@ -1320,10 +1327,20 @@ async function handleSaveAgentModels() {
                 ]"
                 @click="drawerStepRole = step.role"
               >
+                <div
+                  v-if="stepActivity(step).isRunning"
+                  class="card-activity-glow"
+                  aria-hidden="true"
+                ></div>
                 <div class="step-pill-header">
                   <span
                     v-if="stepActivity(step).isRunning"
                     class="agent-spinner step-pill-spinner"
+                    aria-hidden="true"
+                  ></span>
+                  <span
+                    v-if="stepActivity(step).isRunning"
+                    class="running-pulse-dot chip-pulse-dot"
                     aria-hidden="true"
                   ></span>
                   <span
@@ -1443,6 +1460,13 @@ async function handleSaveAgentModels() {
                       </span>
                       <span v-if="activeStepActivity.isRunning && activeStepActivity.lastSignalAgeSeconds !== null" class="step-time-badge mono">
                         📡 Dernier signal il y a {{ activeStepActivity.lastSignalAgeSeconds }}s
+                      </span>
+                      <span
+                        v-if="activeStepActivity.isStalled"
+                        class="step-time-badge mono"
+                        style="color: var(--status-warn); border: 1px solid rgba(240, 178, 50, 0.45)"
+                      >
+                        ⚠ Sans signal &gt; 60s
                       </span>
                     </div>
                     <div

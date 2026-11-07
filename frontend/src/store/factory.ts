@@ -155,11 +155,13 @@ export type AgentActivityState =
   | 'idle'
 
 export const DEFAULT_HEARTBEAT_TIMEOUT_MS = 30_000
+export const STALLED_SIGNAL_THRESHOLD_SECONDS = 60
 
 export interface StepActivityInfo {
   state: AgentActivityState
   isRunning: boolean
   isCrashed: boolean
+  isStalled: boolean
   elapsedSeconds: number
   lastSignalAgeSeconds: number | null
   errorMessage: string | null
@@ -198,6 +200,7 @@ export function useAgentActivityState(
       state: 'idle',
       isRunning: false,
       isCrashed: false,
+      isStalled: false,
       elapsedSeconds: 0,
       lastSignalAgeSeconds: null,
       errorMessage: null,
@@ -227,6 +230,11 @@ export function useAgentActivityState(
   const lastSignalAgeSeconds = !Number.isNaN(lastSignalMs)
     ? Math.max(0, Math.floor((nowMs - lastSignalMs) / 1000))
     : null
+
+  const isStalled =
+    step.status === 'running' &&
+    lastSignalAgeSeconds !== null &&
+    lastSignalAgeSeconds >= STALLED_SIGNAL_THRESHOLD_SECONDS
 
   const errorThought = step.thinking_log?.find(
     (t) => t.kind === 'error' || (t.kind === 'warning' && !step.quality_gate_passed)
@@ -266,6 +274,7 @@ export function useAgentActivityState(
       state: 'crashed',
       isRunning: false,
       isCrashed: true,
+      isStalled: false,
       elapsedSeconds,
       lastSignalAgeSeconds,
       errorMessage,
@@ -284,6 +293,7 @@ export function useAgentActivityState(
       state: 'waiting',
       isRunning: false,
       isCrashed: false,
+      isStalled: false,
       elapsedSeconds,
       lastSignalAgeSeconds,
       errorMessage: null,
@@ -301,6 +311,7 @@ export function useAgentActivityState(
       state: 'running',
       isRunning: true,
       isCrashed: false,
+      isStalled,
       elapsedSeconds,
       lastSignalAgeSeconds,
       errorMessage: null,
@@ -315,6 +326,7 @@ export function useAgentActivityState(
       state: 'completed',
       isRunning: false,
       isCrashed: false,
+      isStalled: false,
       elapsedSeconds,
       lastSignalAgeSeconds,
       errorMessage: null,
@@ -329,6 +341,7 @@ export function useAgentActivityState(
       state: 'skipped',
       isRunning: false,
       isCrashed: false,
+      isStalled: false,
       elapsedSeconds: 0,
       lastSignalAgeSeconds,
       errorMessage: null,
@@ -342,6 +355,7 @@ export function useAgentActivityState(
     state: 'idle',
     isRunning: false,
     isCrashed: false,
+    isStalled: false,
     elapsedSeconds: 0,
     lastSignalAgeSeconds,
     errorMessage: null,
