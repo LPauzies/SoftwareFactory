@@ -184,16 +184,18 @@ async fn main() {
         orch_pr_init.ensure_all_pr_branches_pushed().await;
     });
 
-    // Automatically sync Linear on startup and every `linear_sync_interval_seconds` when an API key is configured in `wagner.toml` or UI
+    // Automatically sync Linear on startup and every `linear_sync_interval_seconds`,
+    // and continuously monitor for merged PRs & auto-archive cards (CAI-25)
     let orch_bg = Arc::clone(&orchestrator);
     tokio::spawn(async move {
         loop {
+            orch_bg.check_merged_prs_and_auto_archive().await;
             let cfg = config::WagnerConfig::load_from_path(&orch_bg.config_file);
             let has_key = cfg.linear_api_key.is_some() || orch_bg.linear_api_key.read().await.is_some();
             if has_key {
                 let _ = orch_bg.sync_linear(None).await;
             }
-            tokio::time::sleep(Duration::from_secs(cfg.linear_sync_interval_seconds)).await;
+            tokio::time::sleep(Duration::from_secs(10)).await;
         }
     });
 
@@ -243,6 +245,7 @@ async fn sync_linear_handler(
     State(orch): State<Arc<Orchestrator>>,
     Json(req): Json<SyncLinearReq>,
 ) -> Result<Json<LinearStatus>, (StatusCode, String)> {
+    orch.check_merged_prs_and_auto_archive().await;
     match orch.sync_linear(req.api_key).await {
         Ok(status) => Ok(Json(status)),
         Err(e) => Err((StatusCode::BAD_REQUEST, e.to_string())),
@@ -415,6 +418,8 @@ async fn create_ticket_handler(
             version_tag: format!("v1.{}.0", guard.tickets.len() + 1),
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            released_at: None,
+            archived: false,
         };
         guard.tickets.insert(0, new_ticket.clone());
         new_ticket
@@ -505,6 +510,9 @@ async fn move_ticket_stage_handler(
             || req.stage == KanbanStage::PrReview
         {
             tk.active_role = None;
+        }
+        if req.stage == KanbanStage::Done && tk.released_at.is_none() {
+            tk.released_at = Some(Utc::now());
         }
         tk.updated_at = Utc::now();
         tk.clone()

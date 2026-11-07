@@ -319,6 +319,8 @@ impl LinearClient {
                     version_tag: format!("v1.{}.0", idx + 1),
                     created_at,
                     updated_at,
+                    released_at: None,
+                    archived: false,
                 });
             }
         }
@@ -519,6 +521,48 @@ impl LinearClient {
             .stderr(Stdio::null())
             .status()
             .await;
+    }
+
+    /// Archive an issue in Linear when merged and aged out of the active board.
+    pub async fn archive_issue(api_key: &str, issue_id: &str) -> Result<bool> {
+        let trimmed = api_key.trim();
+        if trimmed.is_empty() || issue_id.starts_with("ticket-") {
+            return Ok(false);
+        }
+        let mutation = r#"
+        mutation IssueArchive($id: String!) {
+          issueArchive(id: $id) {
+            success
+          }
+        }
+        "#;
+        let payload = serde_json::json!({
+            "query": mutation,
+            "variables": {
+                "id": issue_id
+            }
+        })
+        .to_string();
+
+        let output = Command::new("curl")
+            .arg("-sS")
+            .arg("-X")
+            .arg("POST")
+            .arg("https://api.linear.app/graphql")
+            .arg("-H")
+            .arg("Content-Type: application/json")
+            .arg("-H")
+            .arg(format!("Authorization: {}", trimmed))
+            .arg("-d")
+            .arg(&payload)
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            return Ok(false);
+        }
+        let resp: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or_default();
+        Ok(resp.pointer("/data/issueArchive/success").and_then(|v| v.as_bool()).unwrap_or(false))
     }
 }
 

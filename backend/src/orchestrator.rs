@@ -423,6 +423,129 @@ impl Orchestrator {
         }
     }
 
+    /// Check for merged PRs on master, moving them to Released & Run, and auto-archive aged out cards (CAI-25).
+    pub async fn check_merged_prs_and_auto_archive(&self) {
+        let (api_key_opt, tickets_to_check, repo_dir) = {
+            let key_guard = self.linear_api_key.read().await;
+            let state_guard = self.state.read().await;
+            let default_repo = state_guard
+                .projects
+                .first()
+                .map(|p| p.repository_path.clone())
+                .unwrap_or_else(|| "/home/mediaserver/Documents/SoftwareFactory".to_string());
+            (key_guard.clone(), state_guard.tickets.clone(), default_repo)
+        };
+
+        // 1. Detect PRs merged into master for tickets in PrReview
+        let mut newly_done = Vec::new();
+        for ticket in &tickets_to_check {
+            if ticket.stage == KanbanStage::PrReview && !ticket.archived {
+                let repo_path = if ticket.repository_path.is_empty() {
+                    &repo_dir
+                } else {
+                    &ticket.repository_path
+                };
+
+                let branch = ticket
+                    .pr_branch
+                    .clone()
+                    .unwrap_or_else(|| format!("factory-{}", Self::clean_ticket_identifier(&ticket.identifier)));
+                let slug = Self::clean_ticket_identifier(&ticket.identifier);
+
+                let check_script = format!(
+                    r#"cd "{repo}" 2>/dev/null || exit 0
+git fetch origin master 2>/dev/null || true
+MERGED=0
+if git merge-base --is-ancestor "refs/remotes/origin/{branch}" "refs/remotes/origin/master" 2>/dev/null; then
+  MERGED=1
+elif git merge-base --is-ancestor "refs/heads/{branch}" "refs/heads/master" 2>/dev/null; then
+  MERGED=1
+elif git log origin/master -n 35 --oneline 2>/dev/null | grep -qi "{slug}"; then
+  MERGED=1
+elif git log master -n 35 --oneline 2>/dev/null | grep -qi "{slug}"; then
+  MERGED=1
+fi
+if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
+                    repo = repo_path,
+                    branch = branch,
+                    slug = slug,
+                );
+
+                if let Ok(out) = tokio::process::Command::new("bash")
+                    .arg("-c")
+                    .arg(&check_script)
+                    .output()
+                    .await
+                {
+                    let s = String::from_utf8_lossy(&out.stdout);
+                    if s.contains("MERGED") {
+                        info!("Auto-detected merged PR on master for ticket {}", ticket.identifier);
+                        newly_done.push(ticket.id.clone());
+                    }
+                }
+            }
+        }
+
+        // Apply transition to Done for newly merged tickets
+        for tid in newly_done {
+            let mut updated_tk = None;
+            {
+                let mut guard = self.state.write().await;
+                if let Some(tk) = guard.tickets.iter_mut().find(|t| t.id == tid) {
+                    tk.stage = KanbanStage::Done;
+                    tk.active_role = None;
+                    tk.released_at = Some(Utc::now());
+                    tk.updated_at = Utc::now();
+                    updated_tk = Some(tk.clone());
+                }
+            }
+            if let Some(tk) = updated_tk {
+                self.sync_ticket_stage_to_linear(&tk.id, KanbanStage::Done).await;
+                let _ = self.event_tx.send(FactoryEvent::TicketUpdated { ticket: tk.clone() });
+                if let Some(ref api_key) = api_key_opt {
+                    let comment = format!(
+                        "🚀 **[WAGNER Software Factory]** Pull Request for `{}` merged into `master`!\nCard transitioned to **Released & Run**.\n(Will automatically disappear after grace period).",
+                        tk.identifier
+                    );
+                    LinearClient::post_issue_comment(api_key, &tk.id, &comment).await;
+                }
+            }
+        }
+
+        // 2. Auto-archive cards in Released & Run after 5 minutes
+        let archive_cutoff_minutes = 5;
+        let mut to_archive = Vec::new();
+        {
+            let guard = self.state.read().await;
+            let now = Utc::now();
+            for tk in &guard.tickets {
+                if tk.stage == KanbanStage::Done && !tk.archived {
+                    let ref_time = tk.released_at.unwrap_or(tk.updated_at);
+                    if now - ref_time >= chrono::Duration::minutes(archive_cutoff_minutes) {
+                        to_archive.push((tk.id.clone(), tk.identifier.clone()));
+                    }
+                }
+            }
+        }
+
+        for (tid, ident) in to_archive {
+            info!("Auto-archiving aged ticket {} from Released & Run (TTL expired)", ident);
+            if let Some(ref api_key) = api_key_opt {
+                let _ = LinearClient::archive_issue(api_key, &tid).await;
+            }
+            {
+                let mut guard = self.state.write().await;
+                guard.tickets.retain(|t| t.id != tid);
+            }
+            let _ = self.event_tx.send(FactoryEvent::TicketDeleted {
+                ticket_id: tid,
+                identifier: ident,
+            });
+        }
+
+        self.persist().await;
+    }
+
     pub fn default_linear_projects_and_tickets(
         workspaces_root: &PathBuf,
     ) -> (Vec<LinearProject>, Vec<FactoryTicket>) {
@@ -482,6 +605,8 @@ impl Orchestrator {
                 version_tag: "v1.0.0".to_string(),
                 created_at: Utc::now() - chrono::Duration::days(3),
                 updated_at: Utc::now() - chrono::Duration::hours(6),
+                released_at: None,
+                archived: false,
             },
             FactoryTicket {
                 id: "ticket-wag-102".to_string(),
@@ -503,6 +628,8 @@ impl Orchestrator {
                 version_tag: "v1.1.0".to_string(),
                 created_at: Utc::now() - chrono::Duration::days(2),
                 updated_at: Utc::now() - chrono::Duration::hours(2),
+                released_at: Some(Utc::now() - chrono::Duration::hours(2)),
+                archived: false,
             },
             FactoryTicket {
                 id: "ticket-wag-103".to_string(),
@@ -524,6 +651,8 @@ impl Orchestrator {
                 version_tag: "v1.2.0".to_string(),
                 created_at: Utc::now() - chrono::Duration::hours(12),
                 updated_at: Utc::now() - chrono::Duration::minutes(30),
+                released_at: None,
+                archived: false,
             },
             FactoryTicket {
                 id: "ticket-wag-104".to_string(),
@@ -545,6 +674,8 @@ impl Orchestrator {
                 version_tag: "v1.3.0".to_string(),
                 created_at: Utc::now() - chrono::Duration::hours(8),
                 updated_at: Utc::now() - chrono::Duration::minutes(15),
+                released_at: None,
+                archived: false,
             },
             FactoryTicket {
                 id: "ticket-pay-201".to_string(),
@@ -566,6 +697,8 @@ impl Orchestrator {
                 version_tag: "v1.0.0".to_string(),
                 created_at: Utc::now() - chrono::Duration::hours(6),
                 updated_at: Utc::now() - chrono::Duration::minutes(25),
+                released_at: None,
+                archived: false,
             },
             FactoryTicket {
                 id: "ticket-pay-202".to_string(),
@@ -587,6 +720,8 @@ impl Orchestrator {
                 version_tag: "v1.1.0".to_string(),
                 created_at: Utc::now() - chrono::Duration::hours(4),
                 updated_at: Utc::now() - chrono::Duration::minutes(10),
+                released_at: None,
+                archived: false,
             },
             FactoryTicket {
                 id: "ticket-sre-301".to_string(),
@@ -608,6 +743,8 @@ impl Orchestrator {
                 version_tag: "v1.0.0".to_string(),
                 created_at: Utc::now() - chrono::Duration::hours(2),
                 updated_at: Utc::now() - chrono::Duration::minutes(5),
+                released_at: None,
+                archived: false,
             },
         ];
 
@@ -3841,5 +3978,35 @@ export const t = (k: string) => k;
         assert_eq!(po.model, "gemini-3.8-flash-low");
         let expert = proj.agents.iter().find(|a| a.role == AgentRole::Expert).unwrap();
         assert_eq!(expert.model, "gemini-3.8-flash-low");
+    }
+
+    #[tokio::test]
+    async fn test_cai_25_auto_archive_aged_tickets_in_released_and_run() {
+        let tmp_dir = std::env::temp_dir().join(format!("wagner_cai25_test_{}", Uuid::new_v4()));
+        let orch = Orchestrator::new(
+            tmp_dir.join("data"),
+            PathBuf::from("/home/mediaserver/Documents/SoftwareFactory"),
+        );
+        let mut ticket_to_expire = {
+            let guard = orch.state.read().await;
+            guard.tickets.first().unwrap().clone()
+        };
+        ticket_to_expire.id = format!("ticket-test-expire-{}", Uuid::new_v4());
+        ticket_to_expire.identifier = "CAI-TEST".to_string();
+        ticket_to_expire.stage = KanbanStage::Done;
+        ticket_to_expire.released_at = Some(Utc::now() - chrono::Duration::minutes(10));
+        let tid = ticket_to_expire.id.clone();
+
+        {
+            let mut guard = orch.state.write().await;
+            guard.tickets.push(ticket_to_expire);
+        }
+
+        assert!(orch.state.read().await.tickets.iter().any(|t| t.id == tid));
+
+        orch.check_merged_prs_and_auto_archive().await;
+
+        // Card must be automatically removed/archived from active board
+        assert!(!orch.state.read().await.tickets.iter().any(|t| t.id == tid));
     }
 }

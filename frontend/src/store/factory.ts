@@ -392,6 +392,9 @@ export const useFactoryStore = defineStore('factory', () => {
   const projectTickets = computed(() => {
     const currentId = selectedLinearProjectId.value
     return tickets.value.filter((t) => {
+      if ((t as any).archived) {
+        return false
+      }
       if (
         dismissedTicketIds.value.includes(t.id) ||
         dismissedTicketIds.value.includes(t.identifier)

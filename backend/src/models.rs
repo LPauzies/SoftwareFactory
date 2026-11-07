@@ -139,6 +139,10 @@ pub struct FactoryTicket {
     #[serde(default = "Utc::now")]
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub released_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub archived: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
