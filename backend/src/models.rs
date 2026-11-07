@@ -136,8 +136,6 @@ pub struct FactoryTicket {
     #[serde(default)]
     pub pr_branch: Option<String>,
     pub version_tag: String,
-    #[serde(default = "Utc::now")]
-    pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -368,8 +366,6 @@ pub struct FactoryState {
     #[serde(default)]
     pub tickets: Vec<FactoryTicket>,
     #[serde(default)]
-    pub dismissed_ticket_ids: Vec<String>,
-    #[serde(default)]
     pub linear_status: LinearStatus,
     pub marketplace: Vec<MarketplacePlugin>,
     pub runs: Vec<PipelineRun>,
@@ -402,10 +398,6 @@ pub struct AgyStatus {
 pub enum FactoryEvent {
     TicketUpdated {
         ticket: FactoryTicket,
-    },
-    TicketDeleted {
-        ticket_id: String,
-        identifier: String,
     },
     PipelineStarted {
         run_id: String,
