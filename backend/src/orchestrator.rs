@@ -1911,6 +1911,7 @@ impl Orchestrator {
             let killed_role = tk.active_role;
 
             tk.active_role = None;
+            tk.active_run_id = None;
             tk.pending_question = None;
             tk.stage = KanbanStage::Todo;
             tk.updated_at = Utc::now();
@@ -1981,6 +1982,14 @@ impl Orchestrator {
             if !guard.dismissed_ticket_ids.contains(&removed.identifier) {
                 guard.dismissed_ticket_ids.push(removed.identifier.clone());
             }
+
+            if let Some(ref rid) = removed.active_run_id {
+                if let Some(run) = guard.runs.iter_mut().find(|r| &r.id == rid) {
+                    run.status = PipelineStatus::Failed;
+                    run.completed_at = Some(Utc::now());
+                }
+            }
+
             (removed.active_run_id, removed.identifier)
         };
 
