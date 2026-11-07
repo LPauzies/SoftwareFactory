@@ -464,21 +464,58 @@ export const useFactoryStore = defineStore('factory', () => {
     return first?.default_branch?.trim() || 'master'
   })
 
-  function computePrMetadata(identifier: string, versionTag: string, ghRepo?: string) {
+  function formatPrTitle(identifier: string, rawTitle?: string): string {
+    const cleanId = (identifier || 'WAGNER')
+      .replace(/^\[|\].*$/g, '')
+      .trim()
+      .replace(/[^A-Za-z0-9_-]+/g, '-')
+      .replace(/^-|-$/g, '') || 'WAGNER'
+    let s = (rawTitle || '').split(/\r?\n/)[0]?.trim() || ''
+    s = s.replace(/^\[[^\]]+\](?:\([^)]*\))?\s*/, '')
+    if (s.toLowerCase().startsWith(cleanId.toLowerCase())) {
+      s = s.slice(cleanId.length).trim()
+    }
+    s = s.replace(/^[—–\-:\s]+/, '').trim()
+    if (s.includes(' — ')) {
+      s = s.split(' — ')[0].trim()
+    }
+    s = s.replace(/(?:[\s—–\-:]*#\d+)+\s*$/, '').replace(/[—–\-:\s]+$/, '').trim()
+    const lower = s.toLowerCase()
+    const isPlaceholder =
+      !s ||
+      lower.startsWith('factory ') ||
+      lower.startsWith('factory-') ||
+      lower === cleanId.toLowerCase()
+    const subject = isPlaceholder ? 'Automated Factory PR' : Array.from(s).slice(0, 72).join('').trimEnd()
+    return `[${cleanId}] ${subject}`
+  }
+
+  function computePrMetadata(
+    identifier: string,
+    versionTag: string,
+    ghRepo?: string,
+    rawTitle?: string
+  ) {
     const raw = (identifier || versionTag || 'WAGNER').trim()
     const clean = raw.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-|-$/g, '')
     const branch = `factory-${clean}`
     const repo = ghRepo && !ghRepo.includes('wagner-factory') ? ghRepo : 'LPauzies/SoftwareFactory'
     const baseBranch = defaultBaseBranch.value
-    const url = `https://github.com/${repo}/compare/${baseBranch}...${branch}?expand=1`
-    return { branch, url, baseBranch }
+    const prTitle = formatPrTitle(clean, rawTitle)
+    const url = `https://github.com/${repo}/compare/${baseBranch}...${branch}?expand=1&title=${encodeURIComponent(prTitle)}`
+    return { branch, url, baseBranch, prTitle }
   }
 
   function normalizeTicketPrReview(tk: FactoryTicket): FactoryTicket {
     // Whenever OPS finishes a ticket (`stage === 'done'`), always transition it to Stage 6 (`pr_review`) with its GitHub PR against `default_branch` (`master`)
     if (tk.stage === 'done' || tk.stage === 'pr_review') {
       tk.stage = 'pr_review'
-      const { branch, url } = computePrMetadata(tk.identifier, tk.version_tag, tk.github_repo)
+      const { branch, url } = computePrMetadata(
+        tk.identifier,
+        tk.version_tag,
+        tk.github_repo,
+        tk.title
+      )
       if (!tk.pr_branch || tk.pr_branch.startsWith('wagner/')) {
         tk.pr_branch = branch
       }
@@ -486,7 +523,8 @@ export const useFactoryStore = defineStore('factory', () => {
         !tk.pr_url ||
         tk.pr_url.includes('wagner-factory/') ||
         tk.pr_url.includes('...wagner/') ||
-        tk.pr_url.includes('/compare/main...')
+        tk.pr_url.includes('/compare/main...') ||
+        (tk.pr_url.includes('/compare/') && !tk.pr_url.includes('title='))
       ) {
         tk.pr_url = url
       }
@@ -499,7 +537,9 @@ export const useFactoryStore = defineStore('factory', () => {
     const isSucceeded = run.status === 'succeeded'
     const { branch, url, baseBranch } = computePrMetadata(
       run.ticket_identifier || run.version_tag,
-      run.version_tag
+      run.version_tag,
+      undefined,
+      run.feature_request
     )
     if (isSucceeded) {
       if (!run.pr_branch || run.pr_branch.startsWith('wagner/')) {
@@ -509,7 +549,8 @@ export const useFactoryStore = defineStore('factory', () => {
         !run.pr_url ||
         run.pr_url.includes('wagner-factory/') ||
         run.pr_url.includes('...wagner/') ||
-        run.pr_url.includes('/compare/main...')
+        run.pr_url.includes('/compare/main...') ||
+        (run.pr_url.includes('/compare/') && !run.pr_url.includes('title='))
       ) {
         run.pr_url = url
       }

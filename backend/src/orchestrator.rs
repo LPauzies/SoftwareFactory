@@ -91,9 +91,15 @@ impl Orchestrator {
                         run.ticket_identifier.as_deref(),
                         &run.version_tag,
                     );
-                    let pr_url = format!(
-                        "https://github.com/{}/compare/{}...{}?expand=1",
-                        default_gh_repo, default_base_branch, branch_name
+                    let pr_title = Self::format_pr_title(
+                        run.ticket_identifier.as_deref(),
+                        &run.feature_request,
+                    );
+                    let pr_url = Self::build_github_compare_url(
+                        &default_gh_repo,
+                        &default_base_branch,
+                        &branch_name,
+                        &pr_title,
                     );
 
                     if !run.steps.iter().any(|s| s.role == AgentRole::Pr) {
@@ -179,6 +185,7 @@ impl Orchestrator {
                                     u.contains("wagner-factory/")
                                         || u.contains("...wagner/")
                                         || u.contains("/compare/main...")
+                                        || (u.contains("/compare/") && !u.contains("title="))
                                 })
                             || run
                                 .pr_branch
@@ -249,6 +256,7 @@ impl Orchestrator {
                             u.contains("wagner-factory/")
                                 || u.contains("...wagner/")
                                 || u.contains("/compare/main...")
+                                || (u.contains("/compare/") && !u.contains("title="))
                         })
                     || tk
                         .pr_branch
@@ -259,9 +267,12 @@ impl Orchestrator {
                         Self::branch_name_for_ticket(Some(&tk.identifier), &tk.version_tag);
                     let tk_base_branch =
                         toml_cfg.base_branch_for_workspace(&PathBuf::from(&tk.repository_path));
-                    let pr_url = format!(
-                        "https://github.com/{}/compare/{}...{}?expand=1",
-                        tk.github_repo, tk_base_branch, branch_name
+                    let pr_title = Self::format_pr_title(Some(&tk.identifier), &tk.title);
+                    let pr_url = Self::build_github_compare_url(
+                        &tk.github_repo,
+                        &tk_base_branch,
+                        &branch_name,
+                        &pr_title,
                     );
                     tk.pr_branch = Some(branch_name);
                     tk.pr_url = Some(pr_url);
@@ -357,6 +368,107 @@ impl Orchestrator {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| Self::clean_ticket_identifier(version_tag));
         format!("factory-{}", clean)
+    }
+
+    /// Deterministic PR title formatter (`[CAI-XX] <Sujet métier tronqué à 72 caractères>`) without branch-slug or `#15 #15` noise (CAI-26).
+    pub fn format_pr_title(ticket_identifier: Option<&str>, feature_or_title: &str) -> String {
+        let resolved_id = ticket_identifier
+            .map(Self::clean_ticket_identifier)
+            .filter(|s| !s.is_empty() && s != "WAGNER")
+            .unwrap_or_else(|| Self::clean_ticket_identifier(feature_or_title));
+
+        let mut s = feature_or_title
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("")
+            .trim();
+
+        while s.starts_with('[') {
+            if let Some(end) = s.find(']') {
+                s = s[end + 1..].trim();
+                if s.starts_with('(') {
+                    if let Some(p_end) = s.find(')') {
+                        s = s[p_end + 1..].trim();
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+
+        if s.len() >= resolved_id.len() && s[..resolved_id.len()].eq_ignore_ascii_case(&resolved_id) {
+            s = s[resolved_id.len()..].trim();
+        }
+        s = s.trim_start_matches(['—', '–', '-', ':']).trim();
+
+        if let Some((before_dash, _)) = s.split_once(" — ") {
+            s = before_dash.trim();
+        }
+
+        loop {
+            let trimmed = s.trim_end_matches(['—', '–', '-', ':', ' ']);
+            if let Some(hash_idx) = trimmed.rfind('#') {
+                let after_hash = &trimmed[hash_idx + 1..];
+                if !after_hash.is_empty() && after_hash.chars().all(|c| c.is_ascii_digit()) {
+                    let before_hash = &trimmed[..hash_idx];
+                    if before_hash.is_empty()
+                        || before_hash.ends_with(' ')
+                        || before_hash.ends_with('-')
+                    {
+                        s = before_hash.trim_end_matches(['—', '–', '-', ':', ' ']);
+                        continue;
+                    }
+                }
+            }
+            s = trimmed;
+            break;
+        }
+
+        let lower = s.to_lowercase();
+        let is_branch_placeholder = lower.starts_with("factory ")
+            || lower.starts_with("factory-")
+            || lower == resolved_id.to_lowercase();
+
+        let subject: String = if s.is_empty() || is_branch_placeholder {
+            "Automated Factory PR".to_string()
+        } else {
+            s.chars().take(72).collect::<String>().trim_end().to_string()
+        };
+
+        format!("[{}] {}", resolved_id, subject)
+    }
+
+    /// Percent-encode a query parameter value for GitHub compare URLs.
+    /// shortcut: inline RFC 3986 byte encoding without extra crate dependency, upgrade to url::form_urlencoded if multi-param builders are needed.
+    pub fn url_encode_query_value(val: &str) -> String {
+        let mut encoded = String::with_capacity(val.len() * 2);
+        for b in val.as_bytes() {
+            match *b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                    encoded.push(*b as char);
+                }
+                _ => {
+                    encoded.push_str(&format!("%{:02X}", b));
+                }
+            }
+        }
+        encoded
+    }
+
+    /// Build a GitHub compare & PR creation URL that pre-fills the PR title (`&title=...`) on click (CAI-26).
+    pub fn build_github_compare_url(
+        github_repo: &str,
+        base_branch: &str,
+        head_branch: &str,
+        pr_title: &str,
+    ) -> String {
+        format!(
+            "https://github.com/{}/compare/{}...{}?expand=1&title={}",
+            github_repo,
+            base_branch,
+            head_branch,
+            Self::url_encode_query_value(pr_title)
+        )
     }
 
     /// Resolve the active response locale (`"fr"` or `"en"`).
@@ -1671,16 +1783,20 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                                     u.contains("wagner-factory/")
                                         || u.contains("...wagner/")
                                         || u.contains("/compare/main...")
+                                        || (u.contains("/compare/") && !u.contains("title="))
                                 }))
                     {
                         let branch_name =
                             Self::branch_name_for_ticket(Some(&rt.identifier), &rt.version_tag);
                         let base_branch =
                             cfg.base_branch_for_workspace(&PathBuf::from(&rt.repository_path));
+                        let pr_title = Self::format_pr_title(Some(&rt.identifier), &rt.title);
                         rt.pr_branch = Some(branch_name.clone());
-                        rt.pr_url = Some(format!(
-                            "https://github.com/{}/compare/{}...{}?expand=1",
-                            rt.github_repo, base_branch, branch_name
+                        rt.pr_url = Some(Self::build_github_compare_url(
+                            &rt.github_repo,
+                            &base_branch,
+                            &branch_name,
+                            &pr_title,
                         ));
                     }
                 }
@@ -3818,22 +3934,7 @@ fi
             .output()
             .await;
 
-        let clean_slug = Self::clean_ticket_identifier(ticket_identifier.unwrap_or("WAGNER"));
-        let raw_title = feature_request
-            .lines()
-            .next()
-            .unwrap_or(feature_request)
-            .trim();
-        let clean_feature_title = if let Some(idx) = raw_title.find(']') {
-            raw_title[idx + 1..].trim().trim_start_matches(['—', '-', ':']).trim()
-        } else {
-            raw_title
-        };
-        let pr_title = format!(
-            "feat({}): {}",
-            clean_slug,
-            clean_feature_title.chars().take(80).collect::<String>()
-        );
+        let pr_title = Self::format_pr_title(ticket_identifier, feature_request);
         let pr_body = format!(
             "## WAGNER Autonomous Software Factory — Pull Request\n\n\
             - **Ticket**: `{}`\n\
@@ -3917,10 +4018,12 @@ fi
             }
         }
 
-        // 5. Direct GitHub Compare & Review URL against `{base_branch}` (`master`) on the real repository (`LPauzies/SoftwareFactory`)
-        let compare_url = format!(
-            "https://github.com/{}/compare/{}...{}?expand=1",
-            github_owner_repo, base_branch, branch_name
+        // 5. Direct GitHub Compare & Review URL against `{base_branch}` (`master`) with pre-filled `&title=`
+        let compare_url = Self::build_github_compare_url(
+            &github_owner_repo,
+            &base_branch,
+            &branch_name,
+            &pr_title,
         );
 
         (
@@ -4222,5 +4325,38 @@ let test = 123;
                 assert!(!art.path.starts_with("tests/"), "Artifact must not start with tests/: {}", art.path);
             }
         }
+    }
+
+    #[test]
+    fn test_cai_26_format_pr_title_and_compare_url() {
+        assert_eq!(
+            Orchestrator::format_pr_title(
+                Some("CAI-26"),
+                "[CAI-26] Nom de la PR explicite au clic — Description détaillée"
+            ),
+            "[CAI-26] Nom de la PR explicite au clic"
+        );
+        assert_eq!(
+            Orchestrator::format_pr_title(Some("CAI-22"), "Factory cai 22 - #15 #15"),
+            "[CAI-22] Automated Factory PR"
+        );
+        assert_eq!(
+            Orchestrator::format_pr_title(Some("CAI-18"), "Correction du bouton PR - #15 #15"),
+            "[CAI-18] Correction du bouton PR"
+        );
+        let long_subject = "A".repeat(90);
+        let formatted_long = Orchestrator::format_pr_title(Some("CAI-26"), &long_subject);
+        assert_eq!(formatted_long, format!("[CAI-26] {}", "A".repeat(72)));
+
+        let url = Orchestrator::build_github_compare_url(
+            "LPauzies/SoftwareFactory",
+            "master",
+            "factory-CAI-26",
+            "[CAI-26] Titrage explicite PR",
+        );
+        assert_eq!(
+            url,
+            "https://github.com/LPauzies/SoftwareFactory/compare/master...factory-CAI-26?expand=1&title=%5BCAI-26%5D%20Titrage%20explicite%20PR"
+        );
     }
 }
