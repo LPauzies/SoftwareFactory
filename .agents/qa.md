@@ -1,25 +1,23 @@
-# QA & Test Factory Report — Ticket [CAI-22] (v1.3.0)
+### Livrable QA & Test Factory — Release v1.4.0 ([CAI-23])
 
-La **Test Factory** est raccordée pour valider systématiquement l'application du standard **Ponytail Full** lors de chaque implémentation.
-
-### Spécification BDD (Gherkin)
+Pour garantir la conformité métier et technique de la localisation, la **Test Factory** raccorde une suite d'intégration automatisée et formalise les critères d'acceptation en Gherkin BDD :
 
 ```gherkin
-Feature: Strict Enforcement of Ponytail Full Implementation
+Fonctionnalité: Réponse des agents selon la langue de l'opérateur
+  Contexte:
+    Etant donné un opérateur configuré avec la locale "fr-FR"
 
-  Scenario: Reject PRs lacking Ponytail Full compliance
-    Given a new feature branch targeting release "v1.3.0"
-    When the DEV agent submits changes with non-essential boilerplate
-    Then the QA verification hook fails with "ERROR: Ponytail Full violation"
-    And the pipeline requests the minimal viable diff.
+  Scénario: Interaction standard en français
+    Quand l'opérateur soumet une consigne en français dans le run
+    Alors chaque agent sollicité (PO, Architecte, DEV) répond en français
+    Et les invariants techniques (D1) demeurent inchangés
 
-  Scenario: Pass automated Minimal Viable Diff audit
-    Given code authored under the "ponytail full" rule
-    When "ponytail-review" executes on the commit range
-    Then zero over-engineering warnings are reported
-    And test coverage for the minimal diff meets 100% acceptance criteria.
+  Scénario: Préservation du jargon technique
+    Quand l'opérateur soumet une consigne technique avec des termes en anglais
+    Alors la structure globale de réponse est en français
+    Et les termes techniques clés sont préservés sans altération syntaxique
 ```
 
-### Raccordement & Automatisation
-- **Suite d'intégration** : Validation des hooks d'audit `ponytail-review` et des linters de complexité cyclomatique.
-- **Critères d'acceptation** : Bloquer tout merge introduisant des couches non requises par la spécification PO. Statut QA : **Validé & Prêt pour OPS**.
+**Actions d'automatisation validées :**
+- **Tests d'intégration** : Validation bout-en-bout du pipeline avec injection de payloads `fr` et vérification des tokens de sortie.
+- **Raccordement CI/CD** : Intégration du job de contrôle de locale dans la barrière qualité avant validation du run.
