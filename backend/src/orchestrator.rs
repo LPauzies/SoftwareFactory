@@ -3808,18 +3808,15 @@ fi
         }
 
         // 2. Push `{branch_name}` (`factory-XXX`) to `origin`
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(15),
-            tokio::process::Command::new("git")
-                .arg("-C")
-                .arg(workspace_dir)
-                .arg("push")
-                .arg("origin")
-                .arg(format!("refs/heads/{}:refs/heads/{}", branch_name, branch_name))
-                .arg("--force")
-                .output(),
-        )
-        .await;
+        let _ = tokio::process::Command::new("git")
+            .arg("-C")
+            .arg(workspace_dir)
+            .arg("push")
+            .arg("origin")
+            .arg(format!("refs/heads/{}:refs/heads/{}", branch_name, branch_name))
+            .arg("--force")
+            .output()
+            .await;
 
         let clean_slug = Self::clean_ticket_identifier(ticket_identifier.unwrap_or("WAGNER"));
         let raw_title = feature_request
@@ -3847,23 +3844,20 @@ fi
         );
 
         // 3. Try `gh pr create --base {base_branch}` if `gh` CLI is installed and authenticated
-        if let Ok(Ok(gh_out)) = tokio::time::timeout(
-            std::time::Duration::from_secs(12),
-            tokio::process::Command::new("gh")
-                .current_dir(workspace_dir)
-                .arg("pr")
-                .arg("create")
-                .arg("--base")
-                .arg(&base_branch)
-                .arg("--head")
-                .arg(&branch_name)
-                .arg("--title")
-                .arg(&pr_title)
-                .arg("--body")
-                .arg(&pr_body)
-                .output(),
-        )
-        .await
+        if let Ok(gh_out) = tokio::process::Command::new("gh")
+            .current_dir(workspace_dir)
+            .arg("pr")
+            .arg("create")
+            .arg("--base")
+            .arg(&base_branch)
+            .arg("--head")
+            .arg(&branch_name)
+            .arg("--title")
+            .arg(&pr_title)
+            .arg("--body")
+            .arg(&pr_body)
+            .output()
+            .await
         {
             let stdout_str = String::from_utf8_lossy(&gh_out.stdout).trim().to_string();
             if let Some(line) = stdout_str
@@ -3891,22 +3885,19 @@ fi
                 })
                 .to_string();
 
-                if let Ok(Ok(curl_out)) = tokio::time::timeout(
-                    std::time::Duration::from_secs(12),
-                    tokio::process::Command::new("curl")
-                        .arg("-sS")
-                        .arg("-X")
-                        .arg("POST")
-                        .arg(&api_url)
-                        .arg("-H")
-                        .arg("Accept: application/vnd.github+json")
-                        .arg("-H")
-                        .arg(format!("Authorization: Bearer {}", token.trim()))
-                        .arg("-d")
-                        .arg(&payload)
-                        .output(),
-                )
-                .await
+                if let Ok(curl_out) = tokio::process::Command::new("curl")
+                    .arg("-sS")
+                    .arg("-X")
+                    .arg("POST")
+                    .arg(&api_url)
+                    .arg("-H")
+                    .arg("Accept: application/vnd.github+json")
+                    .arg("-H")
+                    .arg(format!("Authorization: Bearer {}", token.trim()))
+                    .arg("-d")
+                    .arg(&payload)
+                    .output()
+                    .await
                 {
                     if let Ok(json_val) =
                         serde_json::from_slice::<serde_json::Value>(&curl_out.stdout)

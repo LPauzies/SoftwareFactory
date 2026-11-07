@@ -229,6 +229,8 @@ impl AgyBridge {
         cmd.kill_on_drop(true)
             .arg("--mode=auto")
             .arg("--dangerously-skip-permissions")
+            .arg("--print-timeout")
+            .arg("0")
             .arg("--print")
             .arg(prompt)
             .arg("--model")
