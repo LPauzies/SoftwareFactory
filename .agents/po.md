@@ -1,14 +1,13 @@
-# [CAI-23] User Story: Détection et alignement automatique de la langue des agents
+### Spécification PO — [CAI-26] Titrage explicite des Pull Requests
 
-### Objectif & Valeur Métier
-En tant qu'**utilisateur francophone**, je souhaite que les agents me répondent naturellement en **français** lorsque j'interagis en français, afin de bénéficier d'une expérience fluide, efficace et sans friction linguistique.
+**Priorité :** Must Have | **Release cible :** v1.2.0
 
----
+#### User Story
+**En tant que** développeur ou relecteur de la Software Factory,  
+**Je veux que** le titre généré lors de l'ouverture d'une Pull Request reprenne l'identifiant et l'intitulé métier du ticket Linear,  
+**Afin d'** identifier immédiatement le périmètre et la valeur livrée sans redondance inutile.
 
-### Critères d'Acceptation (Definition of Done)
-1. **Alignement par défaut** : Si un message utilisateur est rédigé en français, la réponse générée par l'agent doit être strictement en français.
-2. **Cohérence du dialogue** : La langue choisie reste stable tout au long de la session, sauf bascule explicite de l'utilisateur.
-3. **Vocabulaire technique maîtrisé** : Le jargon technique admis (ex. noms de commandes, concepts logiciels) reste intelligible sans anglicismes superflus.
-4. **Non-régression multilingue** : Les requêtes soumises dans d'autres langues (EN, ES, etc.) conservent le comportement miroir attendu.
-
-*Prêt pour cadrage d'architecture et dérivation technique.*
+#### Critères d'Acceptation
+- **Format standardisé :** Le titre suit le pattern `[<LINEAR_ID>] <Titre du ticket>` (sans duplication de préfixes ni suffixes type `#15 #15`).
+- **Pré-remplissage automatique :** Au clic sur l'ouverture de la PR, le champ titre est automatiquement hydraté avec le nom assaini.
+- **Lisibilité :** Aucun artefact de slugification brute (ex: tirets orphelins, casse incohérente) n'est présent.
