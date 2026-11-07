@@ -3013,6 +3013,11 @@ fi"#,
                     continue;
                 }
                 let dest = workspace_dir.join(clean_path);
+                // SAFETY GUARD: NEVER overwrite existing source files with snippets extracted from markdown!
+                // Autonomous DEV agents edit existing files in-place using tools; markdown snippets are non-exhaustive.
+                if dest.exists() && !clean_path.starts_with(".agents/") {
+                    continue;
+                }
                 if let Some(parent) = dest.parent() {
                     let _ = tokio::fs::create_dir_all(parent).await;
                 }
