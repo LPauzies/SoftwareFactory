@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useI18n } from './i18n'
 import {
   useFactoryStore,
   type FactoryTicket,
@@ -8,6 +9,11 @@ import {
 } from './store/factory'
 
 const store = useFactoryStore()
+const { locale, setLocale, t } = useI18n()
+
+function toggleLocale() {
+  setLocale(locale.value === 'fr' ? 'en' : 'fr')
+}
 
 // Theme state: 'dark' (Soft Charcoal-Black / Light Blue) | 'light' (Ice White / Light Blue)
 const theme = ref<'dark' | 'light'>(
@@ -597,6 +603,16 @@ async function handleSaveAgentModels() {
         <!-- Factory Bricks & Models -->
         <button class="btn" @click="showFactorySettingsModal = true">
           Settings
+        </button>
+
+        <!-- Language Switcher (FR / EN) -->
+        <button
+          class="btn"
+          @click="toggleLocale"
+          :title="locale === 'fr' ? 'Switch to English' : 'Passer en Français'"
+          style="min-width: 4rem; font-weight: 600"
+        >
+          {{ locale === 'fr' ? '🇫🇷 FR' : '🇬🇧 EN' }}
         </button>
 
         <!-- Theme Switcher -->
