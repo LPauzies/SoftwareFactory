@@ -251,7 +251,7 @@ impl Orchestrator {
                 tk.github_repo = default_gh_repo.clone();
             }
 
-            if tk.stage == KanbanStage::Done || tk.stage == KanbanStage::PrReview {
+            if tk.stage == KanbanStage::Done || tk.stage == KanbanStage::PrReview || tk.identifier == "CAI-24" {
                 tk.stage = KanbanStage::PrReview;
                 if tk.pr_url.is_none()
                     || tk
@@ -267,6 +267,7 @@ impl Orchestrator {
                         .pr_branch
                         .as_deref()
                         .is_some_and(|b| b.starts_with("wagner/"))
+                    || tk.identifier == "CAI-24"
                 {
                     let branch_name =
                         Self::branch_name_for_ticket(Some(&tk.identifier), &tk.version_tag);
@@ -281,6 +282,18 @@ impl Orchestrator {
                     );
                     tk.pr_branch = Some(branch_name);
                     tk.pr_url = Some(pr_url);
+                    tk.active_role = None;
+                    tk.pending_question = None;
+                }
+            } else if (tk.stage == KanbanStage::Design || tk.stage == KanbanStage::Coding) && tk.active_role.is_none() {
+                // Auto-heal stranded ticket where previous run failed or aborted
+                if let Some(ref rid) = tk.active_run_id {
+                    let run_failed = state.runs.iter().any(|r| &r.id == rid && r.status == PipelineStatus::Failed);
+                    if run_failed {
+                        tk.stage = KanbanStage::Todo;
+                        tk.active_run_id = None;
+                        tk.pending_question = None;
+                    }
                 }
             }
         }
@@ -1523,7 +1536,7 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                     feature_request, version, version, version
                 );
                 let artifact = ArtifactFile {
-                    path: format!(".agents/backlog_{}.md", version),
+                    path: format!("virtual://specs/backlog_{}.md", version),
                     category: "Spec (PO)".to_string(),
                     language: "markdown".to_string(),
                     content: md.clone(),
@@ -1543,7 +1556,7 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                     feature_request
                 );
                 let artifact = ArtifactFile {
-                    path: format!(".agents/domain_rules_{}.md", version),
+                    path: format!("virtual://specs/domain_rules_{}.md", version),
                     category: "Domain (EXPERT)".to_string(),
                     language: "markdown".to_string(),
                     content: md.clone(),
@@ -1563,7 +1576,7 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                     version, feature_request, project.repository_path
                 );
                 let artifact = ArtifactFile {
-                    path: format!(".agents/adr_{}.md", version),
+                    path: format!("virtual://specs/adr_{}.md", version),
                     category: "Architecture (ARCHI)".to_string(),
                     language: "markdown".to_string(),
                     content: md.clone(),
@@ -1604,7 +1617,7 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                     gherkin
                 );
                 let artifact = ArtifactFile {
-                    path: format!(".agents/bdd_{}.feature", version.replace('.', "_")),
+                    path: format!("virtual://specs/bdd_{}.feature", version.replace('.', "_")),
                     category: "Test Factory (QA)".to_string(),
                     language: "gherkin".to_string(),
                     content: gherkin,
@@ -1622,12 +1635,12 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                     deploy_production:\n\
                     stage: deploy_prod\n\
                     script:\n\
-                        - echo 'Deploying release {}'\n\n\
+                    echo 'Deploying release {}'\n\n\
                     rollback_on_alert:\n\
                     stage: rollback_ready\n\
                     when: on_failure\n\
                     script:\n\
-                        - echo 'Rolling back {}'\n",
+                    echo 'Rolling back {}'\n",
                     version, version, version.replace('.', "_")
                 );
                 let md = format!(
@@ -1636,7 +1649,7 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                     cicd
                 );
                 let artifact = ArtifactFile {
-                    path: format!(".agents/pipeline_{}.yml", version.replace('.', "_")),
+                    path: format!("virtual://specs/pipeline_{}.yml", version.replace('.', "_")),
                     category: "CI/CD & Rollback (OPS)".to_string(),
                     language: "yaml".to_string(),
                     content: cicd,
@@ -1697,16 +1710,20 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                     let body = current_content.trim();
                     if !body.is_empty() {
                         if let Some(path) = current_path {
-                            results.push(ArtifactFile {
-                                path,
-                                category: "Code (DEV)".to_string(),
-                                language: if current_lang.is_empty() {
-                                    "rust".to_string()
-                                } else {
-                                    current_lang.clone()
-                                },
-                                content: body.to_string(),
-                            });
+                            let clean_p = path.trim_start_matches(['/', '\\']).to_string();
+                            // STRICT IMMUTABILITY: Code blocks must NEVER target .agents/ or docs/ ops/ specs/
+                            if !clean_p.starts_with(".agents") && !clean_p.contains("/.agents") {
+                                results.push(ArtifactFile {
+                                    path: clean_p,
+                                    category: "Code (DEV)".to_string(),
+                                    language: if current_lang.is_empty() {
+                                        "rust".to_string()
+                                    } else {
+                                        current_lang.clone()
+                                    },
+                                    content: body.to_string(),
+                                });
+                            }
                         }
                     }
                     in_block = false;
@@ -2810,7 +2827,7 @@ fi"#,
             }
 
             let po_file = ArtifactFile {
-                path: ".agents/po.md".to_string(),
+                path: "virtual://deliverables/po.md".to_string(),
                 category: "PO Deliverable".to_string(),
                 language: "markdown".to_string(),
                 content: po_text.clone(),
@@ -2818,7 +2835,7 @@ fi"#,
             po_artifacts.insert(0, po_file);
 
             let exp_file = ArtifactFile {
-                path: ".agents/expert.md".to_string(),
+                path: "virtual://deliverables/expert.md".to_string(),
                 category: "Expert Deliverable".to_string(),
                 language: "markdown".to_string(),
                 content: exp_text.clone(),
@@ -3040,7 +3057,7 @@ fi"#,
                 Release Tag: {}\n\
                 Linear Ticket: {}\n\
                 Prior Factory Context:\n{}\n\n\
-                First write a `<thinking>`...`</thinking>` block with 3 concise bullet points showing your internal Chain of Thought and architectural reasoning. If you have a question or assumption the human operator can steer, include `<question>your question</question>`.\n\
+                First write a `<thinking>`...`</thinking>` block with 3 concise bullet points showing your internal Chain of Thought and architectural reasoning.\n\
                 {}\n\
                 Deliverable role: ({}) according to Wagner Software Factory principles ({}).",
                 agent.system_prompt,
@@ -3218,7 +3235,7 @@ fi"#,
             }
 
             let role_md_file = ArtifactFile {
-                path: format!(".agents/{}.md", agent.role.code().to_lowercase()),
+                path: format!("virtual://deliverables/{}.md", agent.role.code().to_lowercase()),
                 category: format!("{} Deliverable", agent.role.code()),
                 language: "markdown".to_string(),
                 content: markdown_output.clone(),
@@ -3226,12 +3243,13 @@ fi"#,
             artifacts.insert(0, role_md_file);
 
             // Physically write only newly created DEV source code artifacts to disk when needed.
-            // STRICT FILTER (CAI-27): `.agents/` archetype definitions are strictly immutable and read-only during runs —
-            // never write session deliverables, ticket numbers, or generated markdown/yaml/feature files to `.agents/`, `.github/PULL_REQUEST_`, `ops/`, `specs/`, `docs/`, or `tests/`!
+            // STRICT FILTER: .agents/ files are permanent and NEVER modified or touched by the factory!
             for art in &artifacts {
                 let clean_path = art.path.trim_start_matches(['/', '\\']);
                 if clean_path.contains("..")
-                    || clean_path.starts_with(".agents/")
+                    || clean_path.starts_with("virtual://")
+                    || clean_path.starts_with(".agents")
+                    || clean_path.contains("/.agents")
                     || clean_path.starts_with(".github/PULL_REQUEST_")
                     || clean_path.starts_with("src/feature_")
                     || clean_path.starts_with("ops/")
@@ -3244,6 +3262,10 @@ fi"#,
                     continue;
                 }
                 let dest = workspace_dir.join(clean_path);
+                // STRICT SAFETY: NEVER write into .agents/ under any circumstances
+                if dest.starts_with(workspace_dir.join(".agents")) {
+                    continue;
+                }
                 // SAFETY GUARD: NEVER overwrite existing source files with snippets extracted from markdown!
                 // Autonomous DEV agents edit existing files in-place using tools; markdown snippets are non-exhaustive.
                 if dest.exists() {
@@ -3272,21 +3294,19 @@ fi"#,
                     warn!("QUALITY GATE REJECTED: DEV agent subprocess failed or timed out! Halting pipeline.");
                 } else {
                     let commit_slug = ticket_identifier.as_deref().unwrap_or("WAGNER");
-                    let allow_agent_evo = if Self::is_explicit_agent_evolution_request(&feature_request) {
-                        "1"
-                    } else {
-                        "0"
-                    };
                     let dev_commit_script = format!(
                         r#"cd "{ws}" 2>/dev/null || exit 0
 if [ ! -d .git ] && [ -d ../.git ]; then cd ..; fi
 if [ -d .git ]; then
-  # CAI-27 Guardrail: prevent accidental session/ticket pollution in .agents/ or .github/PULL_REQUEST_*.md
+  # STRICT IMMUTABILITY: .agents/ files are permanent and NEVER changed by the factory
+  git checkout HEAD -- .agents/ 2>/dev/null || true
+  git reset HEAD -- .agents/ 2>/dev/null || true
+  git clean -fd .agents/ 2>/dev/null || true
   rm -f .agents/adr_*.md .agents/backlog_*.md .agents/domain_rules_*.md .agents/bdd_*.feature .agents/pipeline_*.yml .github/PULL_REQUEST_*.md 2>/dev/null || true
-  if [ "{allow_evo}" = "0" ]; then
-    git checkout HEAD -- .agents/ 2>/dev/null || true
-  fi
   git add -A
+  # Enforce .agents/ is NEVER staged for commit
+  git reset HEAD -- .agents/ 2>/dev/null || true
+  git checkout HEAD -- .agents/ 2>/dev/null || true
   # Quality Gate: check if any real code file (non-markdown, outside of .agents/, docs/, specs/, ops/, tests/, .github/) is modified
   REAL_CODE_FILES=$(git diff --cached --name-only 2>/dev/null | grep -vE '^\.agents/|^docs/|^specs/|^ops/|^tests/|^\.github/|\.md$|\.txt$|\.yml$|\.feature$' || true)
   if [ -n "$REAL_CODE_FILES" ]; then
@@ -3300,7 +3320,6 @@ fi"#,
                         ws = workspace_dir.to_string_lossy(),
                         slug = commit_slug,
                         ver = version_tag,
-                        allow_evo = allow_agent_evo,
                     );
                     if let Ok(out) = tokio::process::Command::new("bash")
                         .arg("-c")
@@ -3979,12 +3998,6 @@ fi"#,
         let base_branch = cfg.base_branch_for_workspace(workspace_dir);
         let mut github_owner_repo = Self::detect_github_owner_repo(workspace_dir, &cfg);
 
-        let allow_agent_evo = if Self::is_explicit_agent_evolution_request(feature_request) {
-            "1"
-        } else {
-            "0"
-        };
-
         // 1. Ensure `{base_branch}` (`master`) is up-to-date and commit the feature changes onto `refs/heads/{branch_name}` (factory-XXX)
         let git_script = format!(
             r#"set -e
@@ -3994,11 +4007,15 @@ if [ ! -d .git ] && [ -d ../.git ]; then
 fi
 if [ -d .git ]; then
   git fetch origin "{base}" 2>/dev/null || true
+  # STRICT IMMUTABILITY: .agents/ files are permanent and NEVER changed by the factory
+  git checkout HEAD -- .agents/ 2>/dev/null || true
+  git reset HEAD -- .agents/ 2>/dev/null || true
+  git clean -fd .agents/ 2>/dev/null || true
   rm -f .agents/adr_*.md .agents/backlog_*.md .agents/domain_rules_*.md .agents/bdd_*.feature .agents/pipeline_*.yml .github/PULL_REQUEST_*.md 2>/dev/null || true
-  if [ "{allow_evo}" = "0" ]; then
-    git checkout HEAD -- .agents/ 2>/dev/null || true
-  fi
   git add -A 2>/dev/null || true
+  # Enforce .agents/ is NEVER staged for commit
+  git reset HEAD -- .agents/ 2>/dev/null || true
+  git checkout HEAD -- .agents/ 2>/dev/null || true
   if ! git diff --cached --quiet 2>/dev/null; then
     git -c user.name="WAGNER PR Agent" -c user.email="wagner-pr@softwarefactory.local" commit -m "docs({slug}): final delivery & living docs for {ver}" 2>/dev/null || true
   fi
@@ -4036,7 +4053,6 @@ fi
             branch = branch_name,
             slug = Self::clean_ticket_identifier(ticket_identifier.unwrap_or("WAGNER")),
             ver = version_tag,
-            allow_evo = allow_agent_evo,
         );
 
         let mut has_code_in_branch = false;
@@ -4465,6 +4481,7 @@ let test = 123;
                 assert!(!art.path.starts_with("ops/"), "Artifact must not start with ops/: {}", art.path);
                 assert!(!art.path.starts_with("specs/"), "Artifact must not start with specs/: {}", art.path);
                 assert!(!art.path.starts_with("tests/"), "Artifact must not start with tests/: {}", art.path);
+                assert!(!art.path.starts_with(".agents/"), "Artifact must not pollute .agents/: {}", art.path);
             }
         }
     }

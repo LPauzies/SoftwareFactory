@@ -913,11 +913,11 @@ async function handleSaveAgentModels() {
 
             <!-- Card Action Buttons -->
             <button
-              v-if="(tk.stage === 'todo' || tk.stage === 'rolled_back') && !isTicketQueued(tk)"
+              v-if="((tk.stage === 'todo' || tk.stage === 'rolled_back') || (!tk.active_role && !isTicketQueued(tk) && tk.stage !== 'done' && tk.stage !== 'pr_review')) && !ticketActivity(tk).isCrashed"
               class="btn btn-launch"
               @click="handleQuickLaunch(tk, $event)"
             >
-              Launch Wagner
+              {{ tk.stage === 'todo' ? 'Launch Wagner' : 'Relaunch' }}
             </button>
 
             <div
