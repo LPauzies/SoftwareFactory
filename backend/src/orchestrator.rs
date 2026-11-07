@@ -51,13 +51,27 @@ impl Orchestrator {
             }
         }
 
-        // Ensure all projects have the 7th agent role (`AgentRole::Pr`) if loaded from an older 6-agent state file
+        // Ensure all projects have the 7th agent role (`AgentRole::Pr`) if loaded from an older 6-agent state file,
+        // and ensure the `AgentRole::Dev` system prompt enforces Ponytail Full mode (`ponytail full`).
         let default_agents = Self::default_agents();
         for proj in state.projects.iter_mut() {
             for def_ag in &default_agents {
-                if !proj.agents.iter().any(|a| a.role == def_ag.role) {
+                if let Some(existing_ag) = proj.agents.iter_mut().find(|a| a.role == def_ag.role) {
+                    if existing_ag.role == AgentRole::Dev
+                        && !existing_ag.system_prompt.to_lowercase().contains("ponytail")
+                    {
+                        existing_ag.system_prompt = def_ag.system_prompt.clone();
+                    }
+                } else {
                     proj.agents.push(def_ag.clone());
                 }
+            }
+        }
+
+        // Ensure default marketplace plugins (including `ponytail-full`) exist in persisted state
+        for def_plugin in Self::default_marketplace() {
+            if !state.marketplace.iter().any(|m| m.id == def_plugin.id) {
+                state.marketplace.push(def_plugin);
             }
         }
 
@@ -662,7 +676,7 @@ impl Orchestrator {
                 model: "gemini-4-argon-medium".to_string(),
                 effort: "medium".to_string(),
                 enabled: true,
-                system_prompt: "You are the Software Crafts(wo)man Developer (DEV) in WAGNER. Directly inspect the repository codebase, implement production-ready source code changes, write clean unit tests, and commit your working code to the feature branch in English.".to_string(),
+                system_prompt: "You are the Software Crafts(wo)man Developer (DEV) in WAGNER. Always use the ponytail plugin in full mode (`/ponytail full` — smallest complete change, zero speculative bloat, reuse existing patterns, tag deferred limits with `shortcut: <limit>, <when to upgrade>`, and end with 1-2 lines on what was skipped and any user risk). Directly inspect the repository codebase, implement production-ready source code changes, write clean unit tests, and commit your working code to the feature branch in English.".to_string(),
             },
             AgentConfig {
                 role: AgentRole::Qa,
@@ -733,8 +747,18 @@ impl Orchestrator {
                 brick_kind: BrickKind::ScmSecurity,
                 description: "Static analysis, SAST security checks, and clean-code quality gates before merge.".to_string(),
                 installed: true,
-                compatible_with: vec!["gitlab-ci".to_string(), "jenkins-pipeline".to_string()],
+                compatible_with: vec!["gitlab-ci".to_string(), "jenkins-pipeline".to_string(), "ponytail-full".to_string()],
                 icon: "Lock".to_string(),
+            },
+            MarketplacePlugin {
+                id: "ponytail-full".to_string(),
+                name: "Ponytail Full (Minimal Viable Diff)".to_string(),
+                category: "Software Craftsmanship".to_string(),
+                brick_kind: BrickKind::ScmSecurity,
+                description: "Always-on Ponytail Full mode (`/ponytail full`) for DEV implementations: smallest complete change, zero bloat, and explicit `shortcut:` debt ledger comments.".to_string(),
+                installed: true,
+                compatible_with: vec!["sonarqube-craft".to_string(), "gitlab-ci".to_string()],
+                icon: "Scissors".to_string(),
             },
         ]
     }
