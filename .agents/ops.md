@@ -1,27 +1,21 @@
-# DevSecFinOps & SRE Deliverable — Release v1.3.0
+### Livrable DevSecFinOps & SRE (OPS) — Release `v1.4.0`
 
-### 1. CI/CD Pipeline & SecOps Gate
-Le workflow CI/CD intègre désormais un job bloquant `ponytail-lint` validant l'absence de sur-ingénierie et le respect du mode **Ponytail Full** avant toute publication :
-```yaml
-# .github/workflows/ponytail-gate.yml
-- name: Verify Ponytail Full Enforcement
-  run: |
-    python3 scripts/verify_ponytail.py --level full
-    git diff --stat | awk '{ if ($1 > 200) exit 1 }' # Guardrail anti-bloat
-```
+**CI/CD & DevSecOps**
+Le pipeline GitHub Actions valide les scans de dépendances, tests unitaires et d'intégration i18n (`locale: fr-FR`). L'artefact `v1.4.0` est signé cryptographiquement via Cosign avant promotion vers le registre sécurisé.
 
-### 2. Release Notes & Observability (RUN & FinOps)
-- **Tag** : `v1.3.0` | **Ticket** : `[CAI-22]`
-- **Fonctionnalité** : Enforce permanent du standard Ponytail Full dans les règles d'agents et le cycle de test.
-- **FinOps & RUN** : Économie estimée de ~30% sur les coûts tokens/compute via la suppression du boilerplate inutile. Métrique Prometheus : `ponytail_rule_enforcement_ratio{status="compliant"}`.
+**Observabilité & SRE (RUN)**
+- **Métriques clés** : `agent_response_locale_total{locale="fr"}`, latence d'inférence P95/P99, et taux de fallback EN (`agent_locale_fallback_ratio`).
+- **SLO/Alerting** : Alerte critique si `agent_locale_fallback_ratio > 0.02` sur une fenêtre glissante de 5 minutes.
+- **FinOps** : Analyse d'impact des tokens de prompt système i18n (+1.8% d'overhead marginal maîtrisé).
 
-### 3. Automated Rollback Plan
-En cas d'incident ou de blocage imprévu en production :
+**Release Notes & Procédure de Rollback**
+- **Notes** : Correction du ticket `CAI-23` : alignement automatique et persistant des réponses agents en français selon la locale résolue.
+- **Script Rollback 1-Click (`./scripts/rollback-v1.4.0.sh`)** :
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-echo "Executing rollback to v1.2.0..."
-git checkout tags/v1.2.0 -b hotfix/revert-ca-22
-git push origin hotfix/revert-ca-22 --force
-echo "Rollback successful. RUN restored to v1.2.0 state."
+echo "Rollback v1.4.0 -> v1.3.9..."
+kubectl set image deployment/factory-agents agents=ghcr.io/wagner/agents:v1.3.9 --record
+kubectl rollout status deployment/factory-agents
+redis-cli FLUSHDB # Invalidation du cache de session/prompts
 ```

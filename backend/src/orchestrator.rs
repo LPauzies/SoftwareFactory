@@ -52,14 +52,16 @@ impl Orchestrator {
         }
 
         // Ensure all projects have the 7th agent role (`AgentRole::Pr`) if loaded from an older 6-agent state file,
-        // and ensure the `AgentRole::Dev` system prompt enforces Ponytail Full mode (`ponytail full`).
+        // and migrate any legacy English system prompts (`in English` / `You are the`) or missing Ponytail Full rules to French defaults.
         let default_agents = Self::default_agents();
         for proj in state.projects.iter_mut() {
             for def_ag in &default_agents {
                 if let Some(existing_ag) = proj.agents.iter_mut().find(|a| a.role == def_ag.role) {
-                    if existing_ag.role == AgentRole::Dev
-                        && !existing_ag.system_prompt.to_lowercase().contains("ponytail")
-                    {
+                    let lower = existing_ag.system_prompt.to_lowercase();
+                    let needs_migration = lower.contains("in english")
+                        || lower.starts_with("you are the")
+                        || (existing_ag.role == AgentRole::Dev && !lower.contains("ponytail"));
+                    if needs_migration {
                         existing_ag.system_prompt = def_ag.system_prompt.clone();
                     }
                 } else {
@@ -355,6 +357,37 @@ impl Orchestrator {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| Self::clean_ticket_identifier(version_tag));
         format!("factory-{}", clean)
+    }
+
+    /// Resolve the active response locale (`"fr"` or `"en"`).
+    /// shortcut: heuristic French keyword/accent check before falling back to explicit locale or `"fr"`, upgrade to a full lingua detector only if >2 languages are needed.
+    pub fn resolve_locale(explicit_locale: Option<&str>, text: &str) -> &'static str {
+        let lower = text.to_lowercase();
+        let has_french_markers = lower.chars().any(|c| "éèêëàâùûîïôœç".contains(c))
+            || [
+                " le ", " la ", " les ", " des ", " une ", " dans ", " pour ", " avec ",
+                " sur ", " sont ", " être ", " toujours ", " alors ", " que ", " je ",
+            ]
+            .iter()
+            .any(|w| lower.contains(w));
+        if has_french_markers {
+            return "fr";
+        }
+        if let Some(loc) = explicit_locale {
+            if loc.trim().to_lowercase().starts_with("en") {
+                return "en";
+            }
+        }
+        "fr"
+    }
+
+    /// System-level language enforcement injected into every agent prompt (PO, EXPERT, ARCHI, DEV, QA, OPS, PR).
+    pub fn language_directive(locale: &str) -> &'static str {
+        if locale.eq_ignore_ascii_case("en") {
+            "STRICT LANGUAGE DIRECTIVE (locale: en-US): Respond entirely in English (inside <thinking>...</thinking>, <question>...</question>, and the Markdown deliverable)."
+        } else {
+            "DIRECTIVE DE LANGUE STRICTE (locale: fr-FR) : L'utilisateur est francophone. Tu DOIS impérativement rédiger TOUTE ta réponse en FRANÇAIS (y compris les points de raisonnement dans `<thinking>...</thinking>`, toute question éventuelle dans `<question>...</question>`, et l'intégralité du livrable Markdown). Conserve uniquement les balises XML `<thinking>` / `<question>` et les identifiants de code tels quels."
+        }
     }
 
     pub async fn persist(&self) {
@@ -667,7 +700,7 @@ impl Orchestrator {
                 model: "gemini-4-argon-medium".to_string(),
                 effort: "medium".to_string(),
                 enabled: true,
-                system_prompt: "You are the Software Factory Architect (ARCHI) in WAGNER. Ensure module compatibility and homogeneity across the Software Factory, design clean modular boundaries, and specify rollback-safe state transitions in English.".to_string(),
+                system_prompt: "Tu es l'Architecte Logiciel (ARCHI) de la Software Factory WAGNER. Garantir la compatibilité et l'homogénéité des modules à travers l'usine logicielle, concevoir des frontières modulaires propres et spécifier des transitions d'état réversibles (rollback-safe) en français.".to_string(),
             },
             AgentConfig {
                 role: AgentRole::Dev,
@@ -676,7 +709,7 @@ impl Orchestrator {
                 model: "gemini-4-argon-medium".to_string(),
                 effort: "medium".to_string(),
                 enabled: true,
-                system_prompt: "You are the Software Crafts(wo)man Developer (DEV) in WAGNER. Always use the ponytail plugin in full mode (`/ponytail full` — smallest complete change, zero speculative bloat, reuse existing patterns, tag deferred limits with `shortcut: <limit>, <when to upgrade>`, and end with 1-2 lines on what was skipped and any user risk). Directly inspect the repository codebase, implement production-ready source code changes, write clean unit tests, and commit your working code to the feature branch in English.".to_string(),
+                system_prompt: "Tu es le Développeur Software Crafts(wo)man (DEV) dans WAGNER. Utilise toujours le plugin ponytail en mode full (`/ponytail full` — plus petit changement complet, zéro sur-ingénierie, réutilisation des patterns existants, marquage des limites différées avec `shortcut: <limite>, <quand améliorer>`, et conclus par 1-2 lignes sur ce qui a été omis et les risques éventuels). Inspecte directement le dépôt, implémente le code source de production et les tests unitaires, commite sur la branche feature et rédige ton livrable et tes explications en français.".to_string(),
             },
             AgentConfig {
                 role: AgentRole::Qa,
@@ -694,7 +727,7 @@ impl Orchestrator {
                 model: "gemini-3.8-flash-low".to_string(),
                 effort: "low".to_string(),
                 enabled: true,
-                system_prompt: "You are the DevSecFinOps & SRE Engineer (OPS) in WAGNER. Automate Build & Release CI/CD pipelines, generate Release Notes, ensure RUN observability, and provide an explicit Rollback script in English.".to_string(),
+                system_prompt: "Tu es l'Ingénieur DevSecFinOps & SRE (OPS) dans WAGNER. Automatise les pipelines CI/CD de Build & Release, génère les Release Notes, assure l'observabilité du RUN et fournis un script de Rollback explicite en français.".to_string(),
             },
             AgentConfig {
                 role: AgentRole::Pr,
