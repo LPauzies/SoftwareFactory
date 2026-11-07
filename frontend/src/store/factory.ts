@@ -773,7 +773,17 @@ export const useFactoryStore = defineStore('factory', () => {
       }
       refreshState()
     } else if (evt.event_type === 'agent_cancelled') {
-      if (evt.ticket) upsertTicket(evt.ticket)
+      if (evt.ticket) {
+        evt.ticket.active_run_id = null
+        evt.ticket.active_role = null
+        upsertTicket(evt.ticket)
+      }
+      if (evt.run_id) {
+        const r = runs.value.find((x) => x.id === evt.run_id)
+        if (r) {
+          r.status = 'failed'
+        }
+      }
       lastActivityToast.value = `Agent killed on ${evt.ticket?.identifier || 'ticket'}`
       pushNotification({
         ticket_id: evt.ticket?.id || null,
@@ -906,6 +916,13 @@ export const useFactoryStore = defineStore('factory', () => {
   }
 
   async function cancelTicketFactory(ticketId: string) {
+    const existing = tickets.value.find((t) => t.id === ticketId)
+    if (existing) {
+      existing.active_role = null
+      existing.active_run_id = null
+      existing.pending_question = null
+      existing.stage = 'todo'
+    }
     const res = await fetch(`/api/tickets/${ticketId}/cancel`, {
       method: 'POST',
     })
