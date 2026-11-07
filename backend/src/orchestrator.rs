@@ -845,6 +845,7 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                 updated_at: Utc::now() - chrono::Duration::hours(6),
                 released_at: None,
                 archived: false,
+                review_feedback: None,
             },
             FactoryTicket {
                 id: "ticket-wag-102".to_string(),
@@ -868,6 +869,7 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                 updated_at: Utc::now() - chrono::Duration::hours(2),
                 released_at: Some(Utc::now() - chrono::Duration::hours(2)),
                 archived: false,
+                review_feedback: None,
             },
             FactoryTicket {
                 id: "ticket-wag-103".to_string(),
@@ -891,6 +893,7 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                 updated_at: Utc::now() - chrono::Duration::minutes(30),
                 released_at: None,
                 archived: false,
+                review_feedback: None,
             },
             FactoryTicket {
                 id: "ticket-wag-104".to_string(),
@@ -914,6 +917,7 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                 updated_at: Utc::now() - chrono::Duration::minutes(15),
                 released_at: None,
                 archived: false,
+                review_feedback: None,
             },
             FactoryTicket {
                 id: "ticket-pay-201".to_string(),
@@ -937,6 +941,7 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                 updated_at: Utc::now() - chrono::Duration::minutes(25),
                 released_at: None,
                 archived: false,
+                review_feedback: None,
             },
             FactoryTicket {
                 id: "ticket-pay-202".to_string(),
@@ -960,6 +965,7 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                 updated_at: Utc::now() - chrono::Duration::minutes(10),
                 released_at: None,
                 archived: false,
+                review_feedback: None,
             },
             FactoryTicket {
                 id: "ticket-sre-301".to_string(),
@@ -983,6 +989,7 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                 updated_at: Utc::now() - chrono::Duration::minutes(5),
                 released_at: None,
                 archived: false,
+                review_feedback: None,
             },
         ];
 
@@ -2015,9 +2022,25 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
         });
         self.sync_ticket_stage_to_linear(&ticket.id, KanbanStage::Design).await;
 
+        let feedback_prompt = if let Some(ref fb) = ticket.review_feedback {
+            if !fb.trim().is_empty() {
+                format!(
+                    "\n\n### 🔄 OPERATOR REVIEW FEEDBACK / CHANGE REQUEST:\n\
+                     The human operator reviewed the pull request and requested these specific changes:\n\
+                     \"{}\"\n\
+                     You MUST update the technical design, source code, and tests to address this feedback before delivering the updated pull request.",
+                    fb.trim()
+                )
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+
         let feature_str = format!(
-            "[{}] {} — {}",
-            ticket.identifier, ticket.title, ticket.description
+            "[{}] {} — {}{}",
+            ticket.identifier, ticket.title, ticket.description, feedback_prompt
         );
 
         let run = Arc::clone(&self)
@@ -2033,6 +2056,31 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
             .await?;
 
         Ok((ticket, run))
+    }
+
+    /// Rerun the entire factory pipeline when an operator reviews a PR/MR and requests changes with feedback.
+    pub async fn request_ticket_changes(
+        self: Arc<Self>,
+        ticket_id: String,
+        feedback: String,
+        execution_mode: String,
+    ) -> Result<(FactoryTicket, PipelineRun)> {
+        {
+            let mut guard = self.state.write().await;
+            let tk = guard
+                .tickets
+                .iter_mut()
+                .find(|t| t.id == ticket_id)
+                .ok_or_else(|| anyhow::anyhow!("Ticket not found"))?;
+            tk.review_feedback = Some(feedback.trim().to_string());
+            tk.stage = KanbanStage::Design;
+            tk.active_role = Some(AgentRole::Po);
+            tk.pending_question = None;
+            tk.updated_at = Utc::now();
+        }
+        self.persist().await;
+
+        self.launch_ticket_factory(ticket_id, None, execution_mode).await
     }
 
     /// Steer an agent or answer its question in the Chain of Thought!
@@ -4581,5 +4629,27 @@ let test = 123;
                 "Volatile ADR files must not pollute .agents/"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_request_ticket_changes_records_feedback_and_relaunches_pipeline() {
+        let tmp_dir = std::env::temp_dir().join(format!("wagner_review_fb_{}", Uuid::new_v4()));
+        let orch = Arc::new(Orchestrator::new(tmp_dir.join("data"), tmp_dir.clone()));
+        let tid = {
+            let guard = orch.state.read().await;
+            guard.tickets.first().unwrap().id.clone()
+        };
+
+        let feedback = "Please add a retry button and change header color to dark indigo.";
+        let (updated_tk, run) = orch.clone()
+            .request_ticket_changes(tid.clone(), feedback.to_string(), "agy_fast_simulation".to_string())
+            .await
+            .expect("request_ticket_changes must succeed");
+
+        assert_eq!(updated_tk.stage, KanbanStage::Design);
+        assert_eq!(updated_tk.active_role, Some(AgentRole::Po));
+        assert_eq!(updated_tk.review_feedback.as_deref(), Some(feedback));
+        assert!(run.feature_request.contains("OPERATOR REVIEW FEEDBACK"));
+        assert!(run.feature_request.contains(feedback));
     }
 }

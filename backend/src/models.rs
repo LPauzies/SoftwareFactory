@@ -143,6 +143,8 @@ pub struct FactoryTicket {
     pub released_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub archived: bool,
+    #[serde(default)]
+    pub review_feedback: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

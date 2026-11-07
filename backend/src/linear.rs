@@ -321,6 +321,7 @@ impl LinearClient {
                     updated_at,
                     released_at: None,
                     archived: false,
+                    review_feedback: None,
                 });
             }
         }

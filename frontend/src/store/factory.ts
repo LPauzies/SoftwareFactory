@@ -62,6 +62,7 @@ export interface FactoryTicket {
   version_tag: string
   created_at?: string
   updated_at: string
+  review_feedback?: string | null
 }
 
 export interface LinearStatus {
@@ -1352,6 +1353,34 @@ export const useFactoryStore = defineStore('factory', () => {
     }
   }
 
+  async function requestTicketChanges(
+    ticketId: string,
+    feedback: string,
+    executionMode: 'agy_live' | 'agy_fast_simulation' = 'agy_live'
+  ) {
+    const res = await fetch(`/api/tickets/${ticketId}/request-changes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        feedback,
+        execution_mode: executionMode,
+      }),
+    })
+    if (res.ok) {
+      const data = await res.json()
+      if (data.ticket) upsertTicket(data.ticket)
+      if (data.run) {
+        const normalizedRun = normalizeRunPrStep(data.run)
+        const exists = runs.value.find((r) => r.id === normalizedRun.id)
+        if (!exists) runs.value.unshift(normalizedRun)
+      }
+      return data
+    } else {
+      const err = await res.text()
+      throw new Error(err || 'Failed to request changes on ticket')
+    }
+  }
+
   async function cancelTicketFactory(ticketId: string) {
     const existing = tickets.value.find((t) => t.id === ticketId)
     if (existing) {
@@ -1514,6 +1543,7 @@ export const useFactoryStore = defineStore('factory', () => {
     upsertProjectMapping,
     createTicket,
     launchTicketFactory,
+    requestTicketChanges,
     cancelTicketFactory,
     deleteTicket,
     steerTicketAgent,

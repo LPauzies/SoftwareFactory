@@ -423,6 +423,53 @@ async function handleRollbackTicket(ticket: FactoryTicket, evt?: Event) {
   )
 }
 
+// Operator PR / MR Review Feedback & Change Request handling
+const openedFeedbackTicketId = ref<string | null>(null)
+const feedbackText = ref<Record<string, string>>({})
+const feedbackLoading = ref<Record<string, boolean>>({})
+
+function toggleFeedbackBox(ticketId: string) {
+  if (openedFeedbackTicketId.value === ticketId) {
+    openedFeedbackTicketId.value = null
+  } else {
+    openedFeedbackTicketId.value = ticketId
+    if (!feedbackText.value[ticketId]) {
+      feedbackText.value[ticketId] = ''
+    }
+  }
+}
+
+async function submitCardFeedback(ticket: FactoryTicket) {
+  const text = feedbackText.value[ticket.id]?.trim()
+  if (!text) return
+  feedbackLoading.value[ticket.id] = true
+  try {
+    await store.requestTicketChanges(ticket.id, text, 'agy_live')
+    openedFeedbackTicketId.value = null
+    feedbackText.value[ticket.id] = ''
+    store.selectedTicketId = ticket.id
+    drawerTab.value = 'cot'
+  } finally {
+    feedbackLoading.value[ticket.id] = false
+  }
+}
+
+const drawerFeedbackText = ref('')
+const drawerFeedbackLoading = ref(false)
+
+async function submitDrawerFeedback() {
+  if (!store.selectedTicket || !drawerFeedbackText.value.trim()) return
+  drawerFeedbackLoading.value = true
+  try {
+    const text = drawerFeedbackText.value.trim()
+    drawerFeedbackText.value = ''
+    await store.requestTicketChanges(store.selectedTicket.id, text, 'agy_live')
+    drawerTab.value = 'cot'
+  } finally {
+    drawerFeedbackLoading.value = false
+  }
+}
+
 async function handleDeleteTicket(ticket: FactoryTicket, evt?: Event) {
   if (evt) evt.stopPropagation()
   if (ticket.stage === 'todo') return
@@ -921,22 +968,68 @@ async function handleSaveAgentModels() {
 
             <div
               v-else-if="tk.stage === 'done' || tk.stage === 'pr_review'"
-              style="display: flex; gap: 0.4rem; margin-top: 0.35rem"
+              style="display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.35rem"
             >
-              <button
-                class="btn"
-                style="flex: 1; font-size: 0.75rem; padding: 0.32rem"
-                @click.stop="store.selectedTicketId = tk.id"
+              <!-- Primary PR actions -->
+              <div style="display: flex; gap: 0.35rem">
+                <button
+                  v-if="tk.stage === 'pr_review'"
+                  class="btn btn-primary"
+                  style="flex: 1; font-size: 0.72rem; padding: 0.28rem 0.45rem;"
+                  title="Faire des retours sur cette PR et relancer le process"
+                  @click.stop="toggleFeedbackBox(tk.id)"
+                >
+                  💬 Retours (Request Changes)
+                </button>
+                <button
+                  class="btn"
+                  style="font-size: 0.72rem; padding: 0.28rem 0.55rem;"
+                  :style="tk.stage === 'done' ? { flex: '1' } : {}"
+                  @click.stop="store.selectedTicketId = tk.id"
+                >
+                  Inspect
+                </button>
+                <button
+                  v-if="tk.stage === 'done'"
+                  class="btn btn-danger"
+                  style="font-size: 0.72rem; padding: 0.28rem 0.55rem"
+                  @click="handleRollbackTicket(tk, $event)"
+                >
+                  Rollback
+                </button>
+              </div>
+
+              <!-- Collapsible inline feedback form on card for PR Review -->
+              <div
+                v-if="openedFeedbackTicketId === tk.id"
+                class="card-feedback-box"
+                @click.stop
               >
-                Inspect
-              </button>
-              <button
-                class="btn btn-danger"
-                style="font-size: 0.75rem; padding: 0.32rem 0.55rem"
-                @click="handleRollbackTicket(tk, $event)"
-              >
-                Rollback
-              </button>
+                <textarea
+                  v-model="feedbackText[tk.id]"
+                  class="feedback-textarea"
+                  rows="2"
+                  placeholder="Quels changements apporter ? (ex: 'Ajoute la validation et teste les erreurs')..."
+                  @keydown.enter.ctrl.prevent="submitCardFeedback(tk)"
+                ></textarea>
+                <div style="display: flex; justify-content: flex-end; gap: 0.35rem; margin-top: 0.25rem;">
+                  <button
+                    class="btn"
+                    style="font-size: 0.68rem; padding: 0.18rem 0.45rem;"
+                    @click.stop="openedFeedbackTicketId = null"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    class="btn btn-launch"
+                    style="font-size: 0.68rem; padding: 0.18rem 0.6rem;"
+                    :disabled="feedbackLoading[tk.id] || !feedbackText[tk.id]?.trim()"
+                    @click.stop="submitCardFeedback(tk)"
+                  >
+                    {{ feedbackLoading[tk.id] ? 'Lancement...' : '🔄 Relancer avec retours' }}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -1209,6 +1302,44 @@ async function handleSaveAgentModels() {
             >
               Review PR on GitHub ↗
             </a>
+          </div>
+
+          <!-- Review Feedback & Request Changes Widget in Drawer -->
+          <div
+            v-if="store.selectedTicket.stage === 'pr_review' || store.selectedTicket.review_feedback"
+            class="drawer-review-feedback-widget"
+          >
+            <div class="feedback-widget-header">
+              <span class="feedback-widget-title">
+                💬 Retours de Review sur cette Pull Request (MR)
+              </span>
+              <span
+                v-if="store.selectedTicket.review_feedback"
+                class="feedback-history-badge"
+              >
+                Derniers retours appliqués
+              </span>
+            </div>
+            <div v-if="store.selectedTicket.review_feedback" class="feedback-history-quote">
+              “{{ store.selectedTicket.review_feedback }}”
+            </div>
+            <div style="display: flex; gap: 0.5rem; margin-top: 0.35rem">
+              <textarea
+                v-model="drawerFeedbackText"
+                class="feedback-textarea"
+                rows="2"
+                placeholder="Décris tes retours sur la PR... (ex: 'Modifie le libellé, ajoute la gestion d'erreur et vérifie les tests')..."
+                @keydown.enter.ctrl.prevent="submitDrawerFeedback"
+              ></textarea>
+              <button
+                class="btn btn-launch"
+                style="align-self: flex-end; white-space: nowrap; padding: 0.45rem 0.85rem;"
+                :disabled="drawerFeedbackLoading || !drawerFeedbackText.trim()"
+                @click="submitDrawerFeedback"
+              >
+                {{ drawerFeedbackLoading ? 'Lancement...' : '🔄 Relancer avec retours' }}
+              </button>
+            </div>
           </div>
 
           <!-- Target Repository & Launch Control inside Drawer -->

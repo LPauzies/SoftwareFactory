@@ -87,6 +87,12 @@ pub struct LaunchTicketReq {
 }
 
 #[derive(Deserialize)]
+pub struct RequestChangesReq {
+    pub feedback: String,
+    pub execution_mode: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub struct SteerTicketAgentReq {
     pub role: AgentRole,
     pub message: String,
@@ -144,6 +150,7 @@ pub fn build_app_router(orchestrator: Arc<Orchestrator>, static_dir: PathBuf) ->
         .route("/api/tickets/:id", delete(delete_ticket_handler))
         .route("/api/tickets/:id/delete", post(delete_ticket_handler))
         .route("/api/tickets/:id/launch", post(launch_ticket_handler))
+        .route("/api/tickets/:id/request-changes", post(request_changes_handler))
         .route("/api/tickets/:id/cancel", post(cancel_ticket_handler))
         .route("/api/tickets/:id/steer", post(steer_ticket_handler))
         .route("/api/tickets/:id/stage", put(move_ticket_stage_handler))
@@ -422,6 +429,7 @@ async fn create_ticket_handler(
             updated_at: Utc::now(),
             released_at: None,
             archived: false,
+            review_feedback: None,
         };
         guard.tickets.insert(0, new_ticket.clone());
         new_ticket
@@ -440,6 +448,29 @@ async fn launch_ticket_handler(
         .unwrap_or_else(|| "agy_live".to_string());
     match Arc::clone(&orch)
         .launch_ticket_factory(id, req.repository_path, mode)
+        .await
+    {
+        Ok((ticket, run)) => Ok((
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({
+                "ticket": ticket,
+                "run": run
+            })),
+        )),
+        Err(e) => Err((StatusCode::BAD_REQUEST, e.to_string())),
+    }
+}
+
+async fn request_changes_handler(
+    State(orch): State<Arc<Orchestrator>>,
+    Path(id): Path<String>,
+    Json(req): Json<RequestChangesReq>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
+    let mode = req
+        .execution_mode
+        .unwrap_or_else(|| "agy_live".to_string());
+    match Arc::clone(&orch)
+        .request_ticket_changes(id, req.feedback, mode)
         .await
     {
         Ok((ticket, run)) => Ok((
