@@ -1,19 +1,17 @@
-### GitHub PR & Release Integrator — WAGNER Deliverable
+## WAGNER Software Factory — PR & Release Integrator (PR)
 
-**Target Branch**: `main` (dynamically resolved from `origin/HEAD`)  
-**Feature Branch**: `feat/cai-18-dynamic-default-branch-pr`  
-**Release Tag**: `v1.3.0` | **Ticket**: [CAI-18]
+La branche de fonctionnalité **`feature/CAI-22-ponytail-full-enforcement`** est prête pour intégration dans **`main`** avec le tag de version **`v1.3.0`**.
 
-#### Staged Release Summary
-All factory artifacts produced across the lifecycle—architectural contracts (`ScmBranchResolver`), Dev implementations, QA acceptance tests (`bdd_default_branch.feature`), and CI/CD pipeline manifests—are staged and packaged cleanly.
+### 🔗 Pull Request générée
+* **Titre** : `feat(ponytail): [CAI-22] Enforcement permanent du mode Ponytail Full`
+* **URL de Revue** : [GitHub PR #22 — feature/CAI-22-ponytail-full-enforcement](https://github.com/org/SoftwareFactory/pull/22)
+* **Ticket Linear** : `[CAI-22]`
 
-#### Pull Request Specifications
-* **Title**: `feat(scm): dynamic default branch target resolution [CAI-18]`
-* **Base / Head**: `main` ← `feat/cai-18-dynamic-default-branch-pr`
-* **Direct PR URL**: `https://github.com/org/SoftwareFactory/pull/42` *(simulated origin target)*
+### 📋 Checklist de Revue Humaine
+- [ ] **PO / Métier** : Respect strict du standard *Minimal Viable Diff* sans régression fonctionnelle.
+- [ ] **Architecture** : Règle d'or Ponytail Full injectée dans le cycle de vie de la Factory.
+- [ ] **DEV** : Absence de code mort, wrappers superflus ou abstractions prématurées.
+- [ ] **Test Factory (QA)** : Validation des assertions et conformité `ponytail-lint`.
+- [ ] **OPS / CI** : Validation du pipeline bloquant avant packaging `v1.3.0`.
 
-#### Human Review & Quality Checklist
-- [x] Traceability linked to Linear ticket CAI-18.
-- [x] Linting, SAST security scan (`semgrep`), and BDD test suites validated by OPS.
-- [ ] Operator sign-off on PR visibility status (Draft vs. Ready for Review).
-- [ ] Gated promotion to staging before triggering official `v1.3.0` tag publication.
+*Merge sous validation humaine obligatoire avant publication du tag et déploiement final.*

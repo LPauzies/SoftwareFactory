@@ -1,7 +1,7 @@
 ### Product Owner (PO) — User Stories & Value Spec
 
 #### Objective
-> [CAI-18] L'agent PR doit être capable d'ouvrir la PR automatiquement contre la branche par défaut — 
+> [CAI-22] Assure toi de tout le temps utiliser le plugin ponytail full pour les implémentations — 
 
 #### Acceptance Criteria
 1. **US-v1.3.0-01**: End-to-end flow completes in <100ms.
