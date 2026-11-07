@@ -234,7 +234,15 @@ export const useFactoryStore = defineStore('factory', () => {
   const releases = ref<ReleaseRecord[]>([])
   const rollbacks = ref<RollbackEvent[]>([])
 
-  const selectedLinearProjectId = ref<string>('')
+  const selectedLinearProjectId = ref<string>(
+    localStorage.getItem('wagner_selected_linear_project_id') || 'all'
+  )
+
+  watch(selectedLinearProjectId, (newId) => {
+    if (newId) {
+      localStorage.setItem('wagner_selected_linear_project_id', newId)
+    }
+  })
   const selectedTicketId = ref<string | null>(null)
   const sseConnected = ref<boolean>(false)
   const loading = ref<boolean>(false)
@@ -361,7 +369,6 @@ export const useFactoryStore = defineStore('factory', () => {
   const activeLinearProject = computed(
     () =>
       linearProjects.value.find((p) => p.id === selectedLinearProjectId.value) ||
-      linearProjects.value[0] ||
       null
   )
 
@@ -383,16 +390,30 @@ export const useFactoryStore = defineStore('factory', () => {
   }
 
   const projectTickets = computed(() => {
-    if (!activeLinearProject.value) {
-      return []
-    }
-    const targetId = activeLinearProject.value.id
-    return tickets.value.filter(
-      (t) =>
-        t.linear_project_id === targetId &&
-        !dismissedTicketIds.value.includes(t.id) &&
-        !dismissedTicketIds.value.includes(t.identifier)
-    )
+    const currentId = selectedLinearProjectId.value
+    return tickets.value.filter((t) => {
+      if (
+        dismissedTicketIds.value.includes(t.id) ||
+        dismissedTicketIds.value.includes(t.identifier)
+      ) {
+        return false
+      }
+      if (!currentId || currentId === 'all') {
+        return true
+      }
+      if (t.linear_project_id === currentId) {
+        return true
+      }
+      const currentProj = linearProjects.value.find((p) => p.id === currentId)
+      if (
+        currentProj &&
+        t.repository_path &&
+        currentProj.default_repo_path === t.repository_path
+      ) {
+        return true
+      }
+      return false
+    })
   })
 
   const selectedTicket = computed(() =>
@@ -591,6 +612,7 @@ export const useFactoryStore = defineStore('factory', () => {
 
     if (
       linearProjects.value.length > 0 &&
+      selectedLinearProjectId.value !== 'all' &&
       (!selectedLinearProjectId.value ||
         !linearProjects.value.some((p) => p.id === selectedLinearProjectId.value))
     ) {

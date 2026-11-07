@@ -303,22 +303,43 @@ impl Orchestrator {
         }
     }
 
+    /// Clean ticket identifier removing brackets and markdown links (e.g. `[CAI-8](url)` -> `CAI-8`)
+    pub fn clean_ticket_identifier(raw: &str) -> String {
+        let trimmed = raw.trim();
+        if let Some(start) = trimmed.find('[') {
+            if let Some(end) = trimmed[start..].find(']') {
+                let inside = &trimmed[start + 1..start + end];
+                if !inside.trim().is_empty() {
+                    return inside.trim().to_string();
+                }
+            }
+        }
+        if let Some(first_word) = trimmed.split_whitespace().next() {
+            let clean_word: String = first_word
+                .chars()
+                .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+                .collect();
+            if clean_word.contains('-') {
+                return clean_word;
+            }
+        }
+        let clean: String = trimmed
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+            .collect();
+        if clean.is_empty() {
+            "WAGNER".to_string()
+        } else {
+            clean
+        }
+    }
+
     /// Standard branch naming convention for WAGNER features: `factory-XXX` (where `XXX` is the ticket identifier, e.g. `factory-CAI-12`).
     pub fn branch_name_for_ticket(ticket_identifier: Option<&str>, version_tag: &str) -> String {
-        let raw = ticket_identifier
-            .map(|s| s.trim())
+        let clean = ticket_identifier
+            .map(|s| Self::clean_ticket_identifier(s))
             .filter(|s| !s.is_empty())
-            .unwrap_or(version_tag);
-        let clean: String = raw
-            .chars()
-            .map(|c| {
-                if c.is_alphanumeric() || c == '-' || c == '_' {
-                    c
-                } else {
-                    '-'
-                }
-            })
-            .collect();
+            .unwrap_or_else(|| Self::clean_ticket_identifier(version_tag));
         format!("factory-{}", clean)
     }
 
@@ -326,6 +347,32 @@ impl Orchestrator {
         let guard = self.state.read().await;
         if let Ok(json) = serde_json::to_string_pretty(&*guard) {
             let _ = fs::write(&self.data_file, json);
+        }
+    }
+
+    /// Automatically update the issue state in Linear according to the active Kanban stage.
+    pub async fn sync_ticket_stage_to_linear(&self, ticket_id: &str, stage: KanbanStage) {
+        let (api_key_opt, ticket_opt, states) = {
+            let key_guard = self.linear_api_key.read().await;
+            let state_guard = self.state.read().await;
+            let tk = state_guard.tickets.iter().find(|t| t.id == ticket_id).cloned();
+            (key_guard.clone(), tk, state_guard.linear_status.workflow_states.clone())
+        };
+
+        if let (Some(api_key), Some(ticket)) = (api_key_opt, ticket_opt) {
+            if let Some(state_id) = LinearClient::resolve_state_id_for_stage(
+                &states,
+                ticket.linear_team_id.as_deref(),
+                stage,
+            ) {
+                let tid = ticket.id.clone();
+                let ident = ticket.identifier.clone();
+                tokio::spawn(async move {
+                    if let Ok(true) = LinearClient::update_issue_state(&api_key, &tid, &state_id).await {
+                        info!("Successfully synced Linear issue {} to state {} for stage {:?}", ident, state_id, stage);
+                    }
+                });
+            }
         }
     }
 
@@ -772,6 +819,7 @@ impl Orchestrator {
                 organization_name: Some("WAGNER Local Forge".to_string()),
                 viewer_name: None,
                 last_synced_at: Some(Utc::now()),
+                workflow_states: vec![],
             },
             marketplace: Self::default_marketplace(),
             runs: vec![run_v11, run_v1],
@@ -1563,6 +1611,7 @@ impl Orchestrator {
         let _ = self.event_tx.send(FactoryEvent::TicketUpdated {
             ticket: ticket.clone(),
         });
+        self.sync_ticket_stage_to_linear(&ticket.id, KanbanStage::Design).await;
 
         let feature_str = format!(
             "[{}] {} — {}",
@@ -2230,7 +2279,8 @@ fi"#,
             }
 
             if let Some(tk) = updated_ticket {
-                let _ = self.event_tx.send(FactoryEvent::TicketUpdated { ticket: tk });
+                let _ = self.event_tx.send(FactoryEvent::TicketUpdated { ticket: tk.clone() });
+                self.sync_ticket_stage_to_linear(&tk.id, target_kanban_stage).await;
             }
 
             let _ = self.event_tx.send(FactoryEvent::AgentStepStarted {
@@ -2794,6 +2844,7 @@ fi"#,
         self.persist().await;
 
         if let Some(ref tid) = ticket_id {
+            self.sync_ticket_stage_to_linear(tid, KanbanStage::PrReview).await;
             let key_opt = self.linear_api_key.read().await.clone();
             if let Some(api_key) = key_opt {
                 LinearClient::post_issue_comment(&api_key, tid, &release_notes).await;
@@ -3040,7 +3091,7 @@ fi
             ws = workspace_dir.to_string_lossy(),
             base = base_branch,
             branch = branch_name,
-            slug = ticket_identifier.unwrap_or("WAGNER"),
+            slug = Self::clean_ticket_identifier(ticket_identifier.unwrap_or("WAGNER")),
             ver = version_tag,
         );
 
@@ -3070,11 +3121,21 @@ fi
         )
         .await;
 
+        let clean_slug = Self::clean_ticket_identifier(ticket_identifier.unwrap_or("WAGNER"));
+        let raw_title = feature_request
+            .lines()
+            .next()
+            .unwrap_or(feature_request)
+            .trim();
+        let clean_feature_title = if let Some(idx) = raw_title.find(']') {
+            raw_title[idx + 1..].trim().trim_start_matches(['—', '-', ':']).trim()
+        } else {
+            raw_title
+        };
         let pr_title = format!(
-            "feat({}): {} ({})",
-            ticket_identifier.unwrap_or("WAGNER"),
-            feature_request.chars().take(72).collect::<String>(),
-            version_tag
+            "feat({}): {}",
+            clean_slug,
+            clean_feature_title.chars().take(80).collect::<String>()
         );
         let pr_body = format!(
             "## WAGNER Autonomous Software Factory — Pull Request\n\n\
@@ -3326,5 +3387,29 @@ export const t = (k: string) => k;
         assert_eq!(artifacts[1].path, "frontend/src/utils/i18n.ts");
         assert_eq!(artifacts[1].language, "ts");
         assert_eq!(artifacts[1].content, "export const t = (k: string) => k;");
+    }
+
+    #[test]
+    fn test_clean_ticket_identifier() {
+        assert_eq!(
+            Orchestrator::clean_ticket_identifier("[CAI-8](https://linear.app/team/issue/CAI-8)"),
+            "CAI-8"
+        );
+        assert_eq!(
+            Orchestrator::clean_ticket_identifier(" [CAI-15] "),
+            "CAI-15"
+        );
+        assert_eq!(
+            Orchestrator::clean_ticket_identifier("CAI-20"),
+            "CAI-20"
+        );
+        assert_eq!(
+            Orchestrator::clean_ticket_identifier("CAI-17: granular state sync"),
+            "CAI-17"
+        );
+        assert_eq!(
+            Orchestrator::branch_name_for_ticket(Some("[CAI-19](url)"), "v1.5.0"),
+            "factory-CAI-19"
+        );
     }
 }
