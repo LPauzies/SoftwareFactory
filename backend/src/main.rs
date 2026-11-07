@@ -11,7 +11,7 @@ use axum::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse,
     },
-    routing::{delete, get, post, put},
+    routing::{get, post, put},
     Json, Router,
 };
 use chrono::Utc;
@@ -141,8 +141,6 @@ pub fn build_app_router(orchestrator: Arc<Orchestrator>, static_dir: PathBuf) ->
             get(get_project_mappings_handler).post(upsert_project_mapping_handler),
         )
         .route("/api/tickets", post(create_ticket_handler))
-        .route("/api/tickets/:id", delete(delete_ticket_handler))
-        .route("/api/tickets/:id/delete", post(delete_ticket_handler))
         .route("/api/tickets/:id/launch", post(launch_ticket_handler))
         .route("/api/tickets/:id/cancel", post(cancel_ticket_handler))
         .route("/api/tickets/:id/steer", post(steer_ticket_handler))
@@ -413,7 +411,6 @@ async fn create_ticket_handler(
             pr_url: None,
             pr_branch: None,
             version_tag: format!("v1.{}.0", guard.tickets.len() + 1),
-            created_at: Utc::now(),
             updated_at: Utc::now(),
         };
         guard.tickets.insert(0, new_ticket.clone());
@@ -453,20 +450,6 @@ async fn cancel_ticket_handler(
     match orch.cancel_ticket_agent(&id).await {
         Ok(ticket) => Ok(Json(ticket)),
         Err(e) => Err((StatusCode::BAD_REQUEST, e.to_string())),
-    }
-}
-
-async fn delete_ticket_handler(
-    State(orch): State<Arc<Orchestrator>>,
-    Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    match orch.delete_ticket(&id).await {
-        Ok(identifier) => Ok(Json(serde_json::json!({
-            "deleted": true,
-            "ticket_id": id,
-            "identifier": identifier
-        }))),
-        Err(e) => Err((StatusCode::NOT_FOUND, e.to_string())),
     }
 }
 
