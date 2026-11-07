@@ -1244,7 +1244,11 @@ async function handleSaveAgentModels() {
                     ? `Running ${store.selectedTicket.active_role}...`
                     : isTicketQueued(store.selectedTicket)
                       ? '⏳ Queued (waiting for active task)...'
-                      : 'Launch Wagner in Repository'
+                      : store.selectedTicketRun && store.selectedTicketRun.status === 'failed'
+                        ? '🔄 Relancer le pipeline (Retry)'
+                        : store.selectedTicket.stage === 'todo'
+                          ? 'Launch Wagner in Repository'
+                          : '🔄 Re-run Wagner Pipeline'
                 }}
               </button>
               <button
@@ -1454,6 +1458,18 @@ async function handleSaveAgentModels() {
                       class="step-activity-detail crashed-detail"
                     >
                       {{ activeStepActivity.errorMessage }}
+                    </div>
+                    <div
+                      v-if="activeStepActivity.isCrashed"
+                      style="margin-top: 0.45rem"
+                    >
+                      <button
+                        class="btn btn-launch"
+                        style="font-size: 0.74rem; padding: 0.3rem 0.65rem; width: auto;"
+                        @click="handleLaunchFromDrawer"
+                      >
+                        🔄 Relancer l'agent {{ activeDrawerStep.role }} / Relancer le pipeline
+                      </button>
                     </div>
                   </div>
                 </div>

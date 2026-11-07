@@ -620,9 +620,9 @@ impl Orchestrator {
     /// System-level language enforcement injected into every agent prompt (PO, EXPERT, ARCHI, DEV, QA, OPS, PR).
     pub fn language_directive(locale: &str) -> &'static str {
         if locale.eq_ignore_ascii_case("en") {
-            "STRICT LANGUAGE DIRECTIVE (locale: en-US): Respond entirely in English (inside <thinking>...</thinking>, <question>...</question>, and the Markdown deliverable)."
+            "STRICT LANGUAGE DIRECTIVE (locale: en-US): Respond entirely in English (inside <thinking>...</thinking> and the Markdown deliverable)."
         } else {
-            "DIRECTIVE DE LANGUE STRICTE (locale: fr-FR) : L'utilisateur est francophone. Tu DOIS impérativement rédiger TOUTE ta réponse en FRANÇAIS (y compris les points de raisonnement dans `<thinking>...</thinking>`, toute question éventuelle dans `<question>...</question>`, et l'intégralité du livrable Markdown). Conserve uniquement les balises XML `<thinking>` / `<question>` et les identifiants de code tels quels."
+            "DIRECTIVE DE LANGUE STRICTE (locale: fr-FR) : L'utilisateur est francophone. Tu DOIS impérativement rédiger TOUTE ta réponse en FRANÇAIS (y compris les points de raisonnement dans `<thinking>...</thinking>` et l'intégralité du livrable Markdown). Conserve uniquement les balises XML `<thinking>` et les identifiants de code tels quels."
         }
     }
 
@@ -2745,8 +2745,8 @@ fi"#,
                 thought: expert_thought.clone(),
             });
 
-            let po_instructions = "Do NOT call any tools or modify repo files. First write a `<thinking>`...`</thinking>` block with 3 concise bullet points showing your internal Chain of Thought. If you have a question or assumption the human operator can steer, include `<question>your question</question>`. Then write your concise Markdown deliverable (120-160 words) with crisp User Stories and Acceptance Criteria in French.";
-            let expert_instructions = "Do NOT call any tools or modify repo files. First write a `<thinking>`...`</thinking>` block with 3 concise bullet points showing your internal Chain of Thought. If you have a question or assumption the human operator can steer, include `<question>your question</question>`. Then write your concise Markdown deliverable (120-160 words) defining Ubiquitous Language, Invariants, and Business Rules in French.";
+            let po_instructions = "Do NOT call any tools or modify repo files. First write a `<thinking>`...`</thinking>` block with 3 concise bullet points showing your internal Chain of Thought. Then write your concise Markdown deliverable (120-160 words) with crisp User Stories and Acceptance Criteria in French.";
+            let expert_instructions = "Do NOT call any tools or modify repo files. First write a `<thinking>`...`</thinking>` block with 3 concise bullet points showing your internal Chain of Thought. Then write your concise Markdown deliverable (120-160 words) defining Ubiquitous Language, Invariants, and Business Rules in French.";
 
             let po_prompt = format!(
                 "{}\n\nTarget Repository: {}\nRelease Tag: {}\nLinear Ticket: {}\n\n{}\nDeliverable role: Product Owner (PO) under WAGNER principles.",
@@ -3020,7 +3020,7 @@ fi"#,
                 5. If you output code blocks in markdown, specify their relative path explicitly (e.g. ```rust:backend/src/... or ```ts:frontend/src/...).\n\
                 First write a `<thinking>`...`</thinking>` block with 3 concise points on your technical plan, then write the code and summarize the files modified."
             } else {
-                "Do NOT call any tools or modify repo files. First write a `<thinking>`...`</thinking>` block with 3 concise bullet points showing your internal Chain of Thought and architectural reasoning. If you have a question or assumption the human operator can steer, include `<question>your question</question>`. Then write your concise Markdown deliverable (120-180 words) covering your role according to Wagner Software Factory principles."
+                "Do NOT call any tools or modify repo files. First write a `<thinking>`...`</thinking>` block with 3 concise bullet points showing your internal Chain of Thought and architectural reasoning. Then write your concise Markdown deliverable (120-180 words) covering your role according to Wagner Software Factory principles."
             };
 
             let role_prior_context = match agent.role {
@@ -3565,6 +3565,11 @@ fi"#,
                     loop {
                         tokio::time::sleep(std::time::Duration::from_millis(120)).await;
                         let guard = self.state.read().await;
+                        let run_aborted = guard.runs.iter().any(|r| r.id == run_id && (r.status == PipelineStatus::Failed || r.status == PipelineStatus::RolledBack));
+                        if run_aborted {
+                            warn!("Pipeline run {} was aborted while waiting for operator answer; terminating loop.", run_id);
+                            break;
+                        }
                         let still_waiting = guard
                             .tickets
                             .iter()
