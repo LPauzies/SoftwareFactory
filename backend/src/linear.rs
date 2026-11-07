@@ -256,20 +256,6 @@ impl LinearClient {
                     _ => KanbanStage::Todo,
                 };
 
-                let created_at = node
-                    .get("createdAt")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(Utc::now);
-
-                let updated_at = node
-                    .get("updatedAt")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(Utc::now);
-
                 tickets.push(FactoryTicket {
                     id: id.to_string(),
                     identifier: identifier.to_string(),
@@ -288,8 +274,7 @@ impl LinearClient {
                     pr_url: None,
                     pr_branch: None,
                     version_tag: format!("v1.{}.0", idx + 1),
-                    created_at,
-                    updated_at,
+                    updated_at: Utc::now(),
                 });
             }
         }
@@ -352,43 +337,5 @@ impl LinearClient {
         {
             warn!("Failed to post Linear comment: {}", e);
         }
-    }
-
-    /// Delete (trash) an issue in Linear when deleted from a Wagner Kanban column.
-    pub async fn delete_issue(api_key: &str, issue_id: &str) {
-        let trimmed = api_key.trim();
-        if trimmed.is_empty() || issue_id.starts_with("ticket-") {
-            return;
-        }
-        let mutation = r#"
-        mutation IssueDelete($id: String!) {
-          issueDelete(id: $id) {
-            success
-          }
-        }
-        "#;
-        let payload = serde_json::json!({
-            "query": mutation,
-            "variables": {
-                "id": issue_id
-            }
-        })
-        .to_string();
-
-        let _ = Command::new("curl")
-            .arg("-sS")
-            .arg("-X")
-            .arg("POST")
-            .arg("https://api.linear.app/graphql")
-            .arg("-H")
-            .arg("Content-Type: application/json")
-            .arg("-H")
-            .arg(format!("Authorization: {}", trimmed))
-            .arg("-d")
-            .arg(&payload)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await;
     }
 }
