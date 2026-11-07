@@ -61,7 +61,8 @@ impl Orchestrator {
                     let lower = existing_ag.system_prompt.to_lowercase();
                     let needs_migration = lower.contains("in english")
                         || lower.starts_with("you are the")
-                        || (existing_ag.role == AgentRole::Dev && !lower.contains("ponytail"));
+                        || (existing_ag.role == AgentRole::Dev
+                            && (!lower.contains("ponytail") || !lower.contains("toute la stack")));
                     if needs_migration {
                         existing_ag.system_prompt = def_ag.system_prompt.clone();
                     } else {
@@ -1091,7 +1092,7 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                 model: "gemini-4-argon-medium".to_string(),
                 effort: "medium".to_string(),
                 enabled: true,
-                system_prompt: "Tu es le Développeur Software Crafts(wo)man (DEV) dans WAGNER. Utilise toujours le plugin ponytail en mode full (`/ponytail full` — plus petit changement complet, zéro sur-ingénierie, réutilisation des patterns existants, marquage des limites différées avec `shortcut: <limite>, <quand améliorer>`, et conclus par 1-2 lignes sur ce qui a été omis et les risques éventuels). Inspecte directement le dépôt, implémente le code source de production et les tests unitaires, commite sur la branche feature et rédige ton livrable et tes explications en français.".to_string(),
+                system_prompt: "Tu es le Développeur Software Crafts(wo)man (DEV) dans WAGNER. Utilise toujours le plugin ponytail en mode full (`/ponytail full` — plus petit changement complet, zéro sur-ingénierie, réutilisation des patterns existants, marquage des limites différées avec `shortcut: <limite>, <quand améliorer>`, et conclus par 1-2 lignes sur ce qui a été omis et les risques éventuels). Tu interviens sur toute la stack (infra, data, backend, frontend, tests, tooling, CI/CD) : inspecte directement le dépôt, implémente tout ce que le ticket exige (code, configuration, docker-compose, schémas SQL, scripts, tests), valide en exécutant les commandes nécessaires, commite sur la branche feature et rédige ton livrable et tes explications en français.".to_string(),
             },
             AgentConfig {
                 role: AgentRole::Qa,
@@ -2822,8 +2823,8 @@ fi"#,
                 tokio::join!(po_fut, expert_fut)
             } else {
                 (
-                    Ok(AgyPrintResponse { conversation_id: Some("sim-po".into()), status: Some("success".into()), response: Some(po_fallback_md.clone()), duration_seconds: Some(0.3), num_turns: Some(1), usage: None }),
-                    Ok(AgyPrintResponse { conversation_id: Some("sim-expert".into()), status: Some("success".into()), response: Some(expert_fallback_md.clone()), duration_seconds: Some(0.3), num_turns: Some(1), usage: None }),
+                    Ok(AgyPrintResponse { conversation_id: Some("sim-po".into()), status: Some("success".into()), response: Some(po_fallback_md.clone()), duration_seconds: Some(0.3), num_turns: Some(1), usage: None, error: None, model_used: None }),
+                    Ok(AgyPrintResponse { conversation_id: Some("sim-expert".into()), status: Some("success".into()), response: Some(expert_fallback_md.clone()), duration_seconds: Some(0.3), num_turns: Some(1), usage: None, error: None, model_used: None }),
                 )
             };
 
@@ -3060,15 +3061,15 @@ fi"#,
             });
 
             let role_instructions = if agent.role == AgentRole::Dev {
-                "You are the DEV agent (Software Craftsman). You are executing directly inside the repository workspace with full auto-approved permissions.\n\
-                MANDATORY QUALITY GATE REQUIREMENT: YOU MUST MODIFY OR CREATE REAL SOURCE CODE FILES IN THIS REPOSITORY (e.g. `backend/src/...`, `frontend/src/...`).\n\
-                DO NOT just submit markdown documentation or plans. Deliveries that only modify `.md` files without actual source code changes are REJECTED BY THE QUALITY GATE AND WILL FAIL THE RUN.\n\
-                1. Inspect existing files, components, and project structure.\n\
-                2. Directly use your editing tools (`edit_file`, `write_file`) or bash commands to implement the feature in real files (e.g. `backend/src/...`, `frontend/src/...`).\n\
-                3. NEVER create dummy or placeholder files like `src/feature_*.rs` or fake directories at the repository root.\n\
-                4. NEVER modify `.agents/*.md` files with ticket numbers or session outputs; agent archetype definitions in `.agents/` are strictly immutable and read-only unless the user explicitly asks to evolve an agent definition.\n\
-                5. If you output code blocks in markdown, specify their relative path explicitly (e.g. ```rust:backend/src/... or ```ts:frontend/src/...).\n\
-                First write a `<thinking>`...`</thinking>` block with 3 concise points on your technical plan, then write the code and summarize the files modified."
+                "You are the DEV agent (Software Craftsman), a full-stack engineer executing directly inside the repository workspace with full auto-approved permissions.\n\
+                SCOPE: the WHOLE stack is yours: infra (docker-compose, Dockerfiles, IaC, CI/CD workflows), data (schemas, SQL/migrations, pipelines, scrapers), backend, frontend, tests and tooling (scripts, Makefile/justfile, dependency manifests, config). Create files and directories wherever the project needs them, including at the repository root, and run any command needed (build, tests, `docker compose`, package managers) to validate your work.\n\
+                QUALITY GATE: the run is rejected only if you change nothing but Markdown. Any real file change (code, config, YAML, SQL, Dockerfile, tests, scripts...) is accepted.\n\
+                1. Inspect the repository (README, TODO, existing structure) to understand what is expected.\n\
+                2. Implement the ticket directly in real files with your editing tools or shell commands.\n\
+                3. Do not create dummy/placeholder files (e.g. `src/feature_*.rs`) that do not serve the ticket.\n\
+                4. NEVER modify `.agents/*.md` files with ticket numbers or session outputs; agent archetype definitions in `.agents/` are read-only unless the user explicitly asks to evolve an agent definition.\n\
+                5. Never stop to ask for setup of unrelated plugins or tools: focus only on the ticket.\n\
+                First write a `<thinking>`...`</thinking>` block with 3 concise points on your technical plan, then implement and summarize the files modified."
             } else {
                 "Do NOT call any tools or modify repo files. First write a `<thinking>`...`</thinking>` block with 3 concise bullet points showing your internal Chain of Thought and architectural reasoning. Then write your concise Markdown deliverable (120-180 words) covering your role according to Wagner Software Factory principles."
             };
@@ -3134,9 +3135,10 @@ fi"#,
             );
 
             let start_instant = std::time::Instant::now();
+            let mut effective_model = agent.model.clone();
             let (step_thoughts, pending_q, markdown_output, conv_id, usage, duration_secs) =
                 if execution_mode == "agy_live" {
-                    match self
+                    let agy_result = self
                         .agy
                         .run_agent_prompt(
                             &agent.model,
@@ -3145,9 +3147,26 @@ fi"#,
                             Some(&workspace_dir.to_string_lossy()),
                             None,
                         )
-                        .await
-                    {
+                        .await;
+                    // An empty DEV response means the agent never worked (e.g. hijacked by a plugin hook): report it as such.
+                    let agy_result = match agy_result {
+                        Ok(resp)
+                            if agent.role == AgentRole::Dev
+                                && resp.response.as_deref().map_or(true, |r| r.trim().is_empty()) =>
+                        {
+                            Err(anyhow::anyhow!(
+                                "agent sans réponse : agy a terminé sans aucune sortie ({} tokens, conversation {}). Vérifie le transcript de la conversation (un plugin/hook a pu interrompre l'agent).",
+                                resp.usage.as_ref().map_or(0, |u| u.total_tokens),
+                                resp.conversation_id.as_deref().unwrap_or("inconnue")
+                            ))
+                        }
+                        other => other,
+                    };
+                    match agy_result {
                         Ok(resp) => {
+                            if let Some(m) = resp.model_used.clone() {
+                                effective_model = m;
+                            }
                             let raw_text = resp
                                 .response
                                 .unwrap_or_else(|| fallback_md.clone())
@@ -3335,10 +3354,12 @@ fi"#,
             let mut markdown_output = markdown_output;
 
             let mut step_quality_gate = true;
+            let mut dev_agent_failed = false;
 
             // If this is the DEV role, stage all source code modifications and verify that real production code was changed
             if agent.role == AgentRole::Dev {
                 if conv_id.as_deref() == Some("agy-failed-dev") {
+                    dev_agent_failed = true;
                     step_quality_gate = false;
                     dev_fatal_error = true;
                     warn!("QUALITY GATE REJECTED: DEV agent subprocess failed or timed out! Halting pipeline.");
@@ -3357,19 +3378,31 @@ if [ -d .git ]; then
   # Enforce .agents/ is NEVER staged for commit
   git reset HEAD -- .agents/ 2>/dev/null || true
   git checkout HEAD -- .agents/ 2>/dev/null || true
-  # Quality Gate: check if any real code file (non-markdown, outside of .agents/, docs/, specs/, ops/, tests/, .github/) is modified
-  REAL_CODE_FILES=$(git diff --cached --name-only 2>/dev/null | grep -vE '^\.agents/|^docs/|^specs/|^ops/|^tests/|^\.github/|\.md$|\.txt$|\.yml$|\.feature$' || true)
-  if [ -n "$REAL_CODE_FILES" ]; then
+  # Any non-Markdown file counts (infra, data, tests, tooling, CI, code)
+  CACHED_FILES=$(git diff --cached --name-only 2>/dev/null | grep -vE '^\.agents/|^\.github/PULL_REQUEST_|\.md$' || true)
+  if [ -n "$CACHED_FILES" ]; then
     git -c user.name="WAGNER Dev Agent" -c user.email="wagner-dev@softwarefactory.local" commit -m "feat({slug}): implement source code changes for {ver}" || true
     echo "COMMITTED_REAL_CODE"
-    echo "$REAL_CODE_FILES"
+    echo "$CACHED_FILES"
   else
-    echo "NO_REAL_CODE_FOUND"
+    # The agent might have run `git commit` by itself! Check if commits were added on this branch compared to base
+    BASE_SHA=$(git rev-parse --verify -q "refs/remotes/origin/{base}" || git rev-parse --verify -q "refs/heads/{base}" || git rev-parse --verify -q refs/remotes/origin/master || git rev-parse --verify -q refs/remotes/origin/main || git rev-parse --verify -q HEAD~1 || true)
+    COMMITTED_FILES=""
+    if [ -n "$BASE_SHA" ]; then
+      COMMITTED_FILES=$(git diff --name-only "$BASE_SHA"...HEAD 2>/dev/null | grep -vE '^\.agents/|^\.github/PULL_REQUEST_|\.md$' || true)
+    fi
+    if [ -n "$COMMITTED_FILES" ]; then
+      echo "COMMITTED_REAL_CODE"
+      echo "$COMMITTED_FILES"
+    else
+      echo "NO_REAL_CODE_FOUND"
+    fi
   fi
 fi"#,
                         ws = workspace_dir.to_string_lossy(),
                         slug = commit_slug,
                         ver = version_tag,
+                        base = base_branch,
                     );
                     if let Ok(out) = tokio::process::Command::new("bash")
                         .arg("-c")
@@ -3430,7 +3463,7 @@ fi"#,
                     let code_check_script = format!(
                         r#"cd "{ws}" 2>/dev/null || exit 0
 if [ -d .git ]; then
-  git diff --name-only "refs/remotes/origin/{base}"...HEAD 2>/dev/null | grep -vE '^\.agents/|^docs/|^specs/|^\.github/|\.md$|\.txt$' || true
+  git diff --name-only "refs/remotes/origin/{base}"...HEAD 2>/dev/null | grep -vE '^\.agents/|^\.github/PULL_REQUEST_|\.md$' || true
 fi"#,
                         ws = workspace_dir.to_string_lossy(),
                         base = base_branch,
@@ -3537,7 +3570,7 @@ fi"#,
                 role: agent.role,
                 title: agent.title.clone(),
                 wagner_pillar: agent.wagner_pillar.clone(),
-                model: agent.model.clone(),
+                model: effective_model.clone(),
                 status: if has_question {
                     StepStatus::Running
                 } else if !step_quality_gate {
@@ -3552,6 +3585,8 @@ fi"#,
                 agy_command: cli_cmd,
                 summary: if let Some(ref pq) = pending_q {
                     format!("Waiting for answer: {}", pq)
+                } else if dev_agent_failed {
+                    "DEV agent failed: no response or subprocess error (see deliverable)".to_string()
                 } else if !step_quality_gate {
                     "Quality Gate Rejected: No real source code modified (markdown only)".to_string()
                 } else {
@@ -4093,7 +4128,7 @@ if [ -d .git ]; then
     fi
   fi
   # Quality gate: verify that the branch actually contains modifications to real source code files (not just markdown/docs!)
-  CODE_CHANGES=$(git diff --name-only "$BASE_SHA" "refs/heads/{branch}" 2>/dev/null | grep -vE '^\.agents/|^docs/|^specs/|^\.github/|\.md$|\.txt$' || true)
+  CODE_CHANGES=$(git diff --name-only "$BASE_SHA" "refs/heads/{branch}" 2>/dev/null | grep -vE '^\.agents/|^\.github/PULL_REQUEST_|\.md$' || true)
   if [ -n "$CODE_CHANGES" ]; then
     echo "CODE_CHANGES_OK"
   else

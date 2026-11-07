@@ -87,6 +87,7 @@ const brailleFrames = ['⣾', '⣷', '⣯', '⣟', '⡿', '⢿', '⣻', '⣽']
 const brailleIdx = ref(0)
 const nowMs = ref(Date.now())
 let brailleTimer: ReturnType<typeof setInterval> | null = null
+let reconcileTimer: ReturnType<typeof setInterval> | null = null
 
 const brailleSpinner = computed(() => brailleFrames[brailleIdx.value])
 
@@ -167,6 +168,11 @@ onMounted(async () => {
     brailleIdx.value = (brailleIdx.value + 1) % brailleFrames.length
     nowMs.value = Date.now()
   }, 110)
+  reconcileTimer = setInterval(() => {
+    if (store.runningTickets.length > 0 || activeStepActivity.value.isRunning) {
+      store.refreshState()
+    }
+  }, 5000)
   document.documentElement.setAttribute('data-theme', theme.value)
   await store.initialize()
   // Auto-sync with Linear on page load if a key is stored on backend or in browser localStorage
@@ -187,7 +193,19 @@ onUnmounted(() => {
   if (brailleTimer) {
     clearInterval(brailleTimer)
   }
+  if (reconcileTimer) {
+    clearInterval(reconcileTimer)
+  }
 })
+
+watch(
+  () => store.selectedTicketId,
+  (id) => {
+    if (id) {
+      store.refreshState()
+    }
+  }
+)
 
 watch(
   () => store.selectedTicket,
@@ -1597,7 +1615,14 @@ async function handleSaveAgentModels() {
                         class="step-time-badge mono"
                         style="color: var(--status-warn); border: 1px solid rgba(240, 178, 50, 0.45)"
                       >
-                        ⚠ Sans signal &gt; 60s
+                        ⚠ Sans signal &gt; {{ Math.round((activeStepActivity.lastSignalAgeSeconds || 600) / 60) }}m
+                      </span>
+                      <span
+                        v-else-if="activeStepActivity.isRunning && (activeStepActivity.lastSignalAgeSeconds || 0) >= 30"
+                        class="step-time-badge mono"
+                        style="color: var(--accent-primary); border: 1px solid rgba(88, 166, 255, 0.35)"
+                      >
+                        ⚙ Travail autonome en cours (build, tests &amp; code)
                       </span>
                     </div>
                     <div

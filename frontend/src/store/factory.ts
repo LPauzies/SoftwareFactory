@@ -156,7 +156,8 @@ export type AgentActivityState =
   | 'idle'
 
 export const DEFAULT_HEARTBEAT_TIMEOUT_MS = 30_000
-export const STALLED_SIGNAL_THRESHOLD_SECONDS = 60
+// shortcut: allow up to 600s (10m) before marking a deep autonomous agent turn (e.g. docker builds, long test suites) as stalled
+export const STALLED_SIGNAL_THRESHOLD_SECONDS = 600
 
 export interface StepActivityInfo {
   state: AgentActivityState
@@ -1039,6 +1040,7 @@ export const useFactoryStore = defineStore('factory', () => {
     const es = new EventSource('/api/events')
     es.onopen = () => {
       sseConnected.value = true
+      refreshState()
     }
     es.onerror = () => {
       sseConnected.value = false

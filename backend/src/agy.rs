@@ -5,8 +5,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
+use std::collections::HashMap;
 use std::process::Stdio;
-use std::time::Duration;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tokio::process::Command;
 use tokio::time::timeout;
 use tracing::{info, warn};
@@ -20,6 +22,77 @@ pub struct AgyPrintResponse {
     pub duration_seconds: Option<f64>,
     pub num_turns: Option<u32>,
     pub usage: Option<AgyRawUsage>,
+    /// Set by agy when the turn failed (e.g. `RESOURCE_EXHAUSTED` quota error).
+    #[serde(default)]
+    pub error: Option<String>,
+    /// Model that actually served the turn (may differ from the requested one after a fallback).
+    #[serde(skip)]
+    pub model_used: Option<String>,
+}
+
+/// Model families by preference: best first. Quota-exhausted families fall back to the next one.
+const MODEL_PREFERENCE: [&str; 3] = ["gemini-4-argon", "claude-opus-5-5", "gemini-3.8-flash"];
+/// How long a model that hit its quota is skipped before being retried.
+const EXHAUSTED_TTL: Duration = Duration::from_secs(3600);
+
+fn exhausted_models() -> &'static Mutex<HashMap<String, Instant>> {
+    static CELL: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+    CELL.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn is_exhausted(model: &str) -> bool {
+    exhausted_models()
+        .lock()
+        .map(|m| m.get(model).is_some_and(|t| t.elapsed() < EXHAUSTED_TTL))
+        .unwrap_or(false)
+}
+
+fn mark_exhausted(model: &str) {
+    if let Ok(mut m) = exhausted_models().lock() {
+        m.insert(model.to_string(), Instant::now());
+    }
+}
+
+/// Errors meaning "this model is not usable on the subscription right now" (worth trying the next one).
+fn is_availability_error(err: &str) -> bool {
+    let e = err.to_lowercase();
+    [
+        "quota",
+        "resource_exhausted",
+        "429",
+        "not available",
+        "upgrade your subscription",
+        "content safety",
+        "safety filter",
+        "blocked by content",
+        "blocked by safety",
+        "rate limit",
+        "overloaded",
+    ]
+    .iter()
+    .any(|k| e.contains(k))
+}
+
+/// Candidate models for `requested`: itself, then the lower-preference families with the same effort suffix.
+/// e.g. `gemini-4-argon-medium` -> [argon-medium, claude-opus-5-5-medium, gemini-3.8-flash-medium].
+/// A model outside the preference list (e.g. sonnet) is tried first, then the whole list.
+pub fn fallback_chain(requested: &str) -> Vec<String> {
+    let pos = MODEL_PREFERENCE
+        .iter()
+        .position(|f| requested.starts_with(&format!("{}-", f)));
+    let suffix = match pos {
+        Some(i) => requested[MODEL_PREFERENCE[i].len() + 1..].to_string(),
+        None => requested.rsplit('-').next().unwrap_or("medium").to_string(),
+    };
+    let suffix = if ["low", "medium", "high"].contains(&suffix.as_str()) { suffix } else { "medium".to_string() };
+    let mut chain = vec![requested.to_string()];
+    for f in &MODEL_PREFERENCE[pos.map_or(0, |i| i + 1)..] {
+        let m = format!("{}-{}", f, suffix);
+        if !chain.contains(&m) {
+            chain.push(m);
+        }
+    }
+    chain
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -210,9 +283,48 @@ impl AgyBridge {
         )
     }
 
+    /// Run a turn on the best available model: `model` first, then the next families of
+    /// `MODEL_PREFERENCE` (Argon > Opus > Flash) when the subscription quota is exhausted.
+    pub async fn run_agent_prompt(
+        &self,
+        model: &str,
+        effort: &str,
+        prompt: &str,
+        workspace_dir: Option<&str>,
+        conversation_id: Option<&str>,
+    ) -> Result<AgyPrintResponse> {
+        let chain = fallback_chain(model);
+        let mut last_err = None;
+        for candidate in &chain {
+            if is_exhausted(candidate) && candidate != chain.last().unwrap_or(candidate) {
+                info!("Skipping model {} (quota exhausted recently)", candidate);
+                continue;
+            }
+            match self
+                .run_single_prompt(candidate, effort, prompt, workspace_dir, conversation_id)
+                .await
+            {
+                Ok(mut resp) => {
+                    if candidate != model {
+                        warn!("Model {} unavailable, turn served by fallback model {}", model, candidate);
+                    }
+                    resp.model_used = Some(candidate.clone());
+                    return Ok(resp);
+                }
+                Err(e) if is_availability_error(&e.to_string()) => {
+                    warn!("Model {} unavailable on subscription: {}", candidate, e);
+                    mark_exhausted(candidate);
+                    last_err = Some(e);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err(last_err.unwrap_or_else(|| anyhow!("no model available among {:?}", chain)))
+    }
+
     /// Execute a single non-interactive turn against Antigravity (`agy --mode=auto`) via subprocess.
     /// Runs until completion with full auto-approved permissions and no artificial timeout.
-    pub async fn run_agent_prompt(
+    async fn run_single_prompt(
         &self,
         model: &str,
         effort: &str,
@@ -264,6 +376,16 @@ impl AgyBridge {
         let stdout_str = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
 
+        // agy reports turn failures (quota, auth, model unavailable...) as `"status":"ERROR"` + `"error"`.
+        for line in stdout_str.lines().rev() {
+            if let Ok(parsed) = serde_json::from_str::<AgyPrintResponse>(line.trim()) {
+                if let Some(err) = parsed.error.as_deref().filter(|e| !e.trim().is_empty()) {
+                    return Err(anyhow!("agy error (model {}): {}", model, err.trim()));
+                }
+                break;
+            }
+        }
+
         for line in stdout_str.lines().rev() {
             let trimmed = line.trim();
             if trimmed.starts_with('{') && trimmed.ends_with('}') {
@@ -287,6 +409,8 @@ impl AgyBridge {
                 duration_seconds: Some(1.5),
                 num_turns: Some(1),
                 usage: Some(AgyRawUsage::default()),
+                error: None,
+                model_used: None,
             });
         }
 
@@ -388,5 +512,31 @@ impl AgyBridge {
         }
 
         (thoughts, pending_question, cleaned)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fallback_chain_follows_preference_order() {
+        assert_eq!(
+            fallback_chain("gemini-4-argon-medium"),
+            vec!["gemini-4-argon-medium", "claude-opus-5-5-medium", "gemini-3.8-flash-medium"]
+        );
+        assert_eq!(fallback_chain("claude-opus-5-5-low"), vec!["claude-opus-5-5-low", "gemini-3.8-flash-low"]);
+        assert_eq!(fallback_chain("gemini-3.8-flash-high"), vec!["gemini-3.8-flash-high"]);
+        assert_eq!(
+            fallback_chain("claude-sonnet-5-5-medium"),
+            vec!["claude-sonnet-5-5-medium", "gemini-4-argon-medium", "claude-opus-5-5-medium", "gemini-3.8-flash-medium"]
+        );
+    }
+
+    #[test]
+    fn detects_quota_errors() {
+        assert!(is_availability_error("agy error: Individual quota reached. Please upgrade your subscription"));
+        assert!(is_availability_error("Your previous response was blocked by content safety filters Output retries exhausted after 4 attempts"));
+        assert!(!is_availability_error("Failed to spawn agy subprocess: No such file"));
     }
 }
