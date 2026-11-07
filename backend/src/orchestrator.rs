@@ -303,22 +303,43 @@ impl Orchestrator {
         }
     }
 
+    /// Clean ticket identifier removing brackets and markdown links (e.g. `[CAI-8](url)` -> `CAI-8`)
+    pub fn clean_ticket_identifier(raw: &str) -> String {
+        let trimmed = raw.trim();
+        if let Some(start) = trimmed.find('[') {
+            if let Some(end) = trimmed[start..].find(']') {
+                let inside = &trimmed[start + 1..start + end];
+                if !inside.trim().is_empty() {
+                    return inside.trim().to_string();
+                }
+            }
+        }
+        if let Some(first_word) = trimmed.split_whitespace().next() {
+            let clean_word: String = first_word
+                .chars()
+                .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+                .collect();
+            if clean_word.contains('-') {
+                return clean_word;
+            }
+        }
+        let clean: String = trimmed
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+            .collect();
+        if clean.is_empty() {
+            "WAGNER".to_string()
+        } else {
+            clean
+        }
+    }
+
     /// Standard branch naming convention for WAGNER features: `factory-XXX` (where `XXX` is the ticket identifier, e.g. `factory-CAI-12`).
     pub fn branch_name_for_ticket(ticket_identifier: Option<&str>, version_tag: &str) -> String {
-        let raw = ticket_identifier
-            .map(|s| s.trim())
+        let clean = ticket_identifier
+            .map(|s| Self::clean_ticket_identifier(s))
             .filter(|s| !s.is_empty())
-            .unwrap_or(version_tag);
-        let clean: String = raw
-            .chars()
-            .map(|c| {
-                if c.is_alphanumeric() || c == '-' || c == '_' {
-                    c
-                } else {
-                    '-'
-                }
-            })
-            .collect();
+            .unwrap_or_else(|| Self::clean_ticket_identifier(version_tag));
         format!("factory-{}", clean)
     }
 
@@ -326,6 +347,32 @@ impl Orchestrator {
         let guard = self.state.read().await;
         if let Ok(json) = serde_json::to_string_pretty(&*guard) {
             let _ = fs::write(&self.data_file, json);
+        }
+    }
+
+    /// Automatically update the issue state in Linear according to the active Kanban stage.
+    pub async fn sync_ticket_stage_to_linear(&self, ticket_id: &str, stage: KanbanStage) {
+        let (api_key_opt, ticket_opt, states) = {
+            let key_guard = self.linear_api_key.read().await;
+            let state_guard = self.state.read().await;
+            let tk = state_guard.tickets.iter().find(|t| t.id == ticket_id).cloned();
+            (key_guard.clone(), tk, state_guard.linear_status.workflow_states.clone())
+        };
+
+        if let (Some(api_key), Some(ticket)) = (api_key_opt, ticket_opt) {
+            if let Some(state_id) = LinearClient::resolve_state_id_for_stage(
+                &states,
+                ticket.linear_team_id.as_deref(),
+                stage,
+            ) {
+                let tid = ticket.id.clone();
+                let ident = ticket.identifier.clone();
+                tokio::spawn(async move {
+                    if let Ok(true) = LinearClient::update_issue_state(&api_key, &tid, &state_id).await {
+                        info!("Successfully synced Linear issue {} to state {} for stage {:?}", ident, state_id, stage);
+                    }
+                });
+            }
         }
     }
 
@@ -588,7 +635,7 @@ impl Orchestrator {
                 model: "gemini-3.8-flash-low".to_string(),
                 effort: "low".to_string(),
                 enabled: true,
-                system_prompt: "You are the Product Owner (PO) in the WAGNER Software Factory. Focus on user-centric positive experience, agile value delivery, crisp user stories, and acceptance criteria.".to_string(),
+                system_prompt: "Tu es le Product Owner (PO) dans la Software Factory WAGNER. Rédige les user stories, critères d'acceptation et priorités en français selon les standards du Software Craftsmanship.".to_string(),
             },
             AgentConfig {
                 role: AgentRole::Expert,
@@ -597,7 +644,7 @@ impl Orchestrator {
                 model: "gemini-3.8-flash-low".to_string(),
                 effort: "low".to_string(),
                 enabled: true,
-                system_prompt: "You are the Domain & Business Expert (Expert Métier) in the WAGNER Software Factory. Define ubiquitous domain language, core invariants, edge cases, and business test rules.".to_string(),
+                system_prompt: "Tu es l'Expert Métier (Business Expert) dans WAGNER. Définis le langage ubiquitaire du domaine, les invariants métier, les règles de validation et la documentation vivante en français.".to_string(),
             },
             AgentConfig {
                 role: AgentRole::Archi,
@@ -606,7 +653,7 @@ impl Orchestrator {
                 model: "gemini-4-argon-medium".to_string(),
                 effort: "medium".to_string(),
                 enabled: true,
-                system_prompt: "You are the Software Factory Architect (ARCHI) in WAGNER. Ensure module compatibility and homogeneity across the Software Factory, design clean modular boundaries, and specify rollback-safe state transitions.".to_string(),
+                system_prompt: "You are the Software Factory Architect (ARCHI) in WAGNER. Ensure module compatibility and homogeneity across the Software Factory, design clean modular boundaries, and specify rollback-safe state transitions in English.".to_string(),
             },
             AgentConfig {
                 role: AgentRole::Dev,
@@ -615,7 +662,7 @@ impl Orchestrator {
                 model: "gemini-4-argon-medium".to_string(),
                 effort: "medium".to_string(),
                 enabled: true,
-                system_prompt: "You are the Software Crafts(wo)man Developer (DEV) in WAGNER. Write clean, well-tested implementation code following Software Craftsmanship, TDD/BDD, and non-destructive SCM practices.".to_string(),
+                system_prompt: "You are the Software Crafts(wo)man Developer (DEV) in WAGNER. Directly inspect the repository codebase, implement production-ready source code changes, write clean unit tests, and commit your working code to the feature branch in English.".to_string(),
             },
             AgentConfig {
                 role: AgentRole::Qa,
@@ -624,7 +671,7 @@ impl Orchestrator {
                 model: "gemini-3.8-flash-low".to_string(),
                 effort: "low".to_string(),
                 enabled: true,
-                system_prompt: "You are the Test Factory & QA Engineer (QA) in WAGNER. Connect the Test Factory to the Software Factory by writing automated integration tests and Gherkin BDD business scenarios.".to_string(),
+                system_prompt: "Tu es l'Ingénieur Test Factory & QA dans WAGNER. Raccorde la Test Factory en rédigeant des tests d'intégration automatisés et des scénarios BDD Gherkin en français.".to_string(),
             },
             AgentConfig {
                 role: AgentRole::Ops,
@@ -633,7 +680,7 @@ impl Orchestrator {
                 model: "gemini-3.8-flash-low".to_string(),
                 effort: "low".to_string(),
                 enabled: true,
-                system_prompt: "You are the DevSecFinOps & SRE Engineer (OPS) in WAGNER. Automate Build & Release CI/CD pipelines, generate Release Notes, ensure RUN observability, and provide an explicit Rollback script.".to_string(),
+                system_prompt: "You are the DevSecFinOps & SRE Engineer (OPS) in WAGNER. Automate Build & Release CI/CD pipelines, generate Release Notes, ensure RUN observability, and provide an explicit Rollback script in English.".to_string(),
             },
             AgentConfig {
                 role: AgentRole::Pr,
@@ -642,7 +689,7 @@ impl Orchestrator {
                 model: "gemini-3.8-flash-low".to_string(),
                 effort: "low".to_string(),
                 enabled: true,
-                system_prompt: "You are the GitHub PR & Release Integrator (PR) in the WAGNER Software Factory. Create a clean feature branch against main, commit all artifacts, push the branch to GitHub origin, and generate a Pull Request against main with a review checklist and direct PR URL for human review.".to_string(),
+                system_prompt: "Tu es l'Intégrateur GitHub PR & Release (PR) dans WAGNER. Tu prépares la revue humaine, vérifies l'arbre Git de la branche feature, et génères la Pull Request avec la checklist de contrôle en français.".to_string(),
             },
         ]
     }
@@ -772,6 +819,7 @@ impl Orchestrator {
                 organization_name: Some("WAGNER Local Forge".to_string()),
                 viewer_name: None,
                 last_synced_at: Some(Utc::now()),
+                workflow_states: vec![],
             },
             marketplace: Self::default_marketplace(),
             runs: vec![run_v11, run_v1],
@@ -1241,6 +1289,97 @@ impl Orchestrator {
         }
     }
 
+    pub fn extract_code_blocks_from_markdown(
+        markdown: &str,
+        default_version: &str,
+    ) -> Vec<ArtifactFile> {
+        let mut results = Vec::new();
+        let mut in_block = false;
+        let mut current_lang = String::new();
+        let mut current_path: Option<String> = None;
+        let mut current_content = String::new();
+
+        for line in markdown.lines() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("```") {
+                if in_block {
+                    let body = current_content.trim();
+                    if !body.is_empty() {
+                        let path = current_path.unwrap_or_else(|| {
+                            let ext = match current_lang.to_lowercase().as_str() {
+                                "rust" | "rs" => "rs",
+                                "typescript" | "ts" => "ts",
+                                "javascript" | "js" => "js",
+                                "vue" => "vue",
+                                "python" | "py" => "py",
+                                "go" => "go",
+                                "json" => "json",
+                                "yaml" | "yml" => "yml",
+                                _ => "rs",
+                            };
+                            format!("src/feature_{}.{}", default_version.replace('.', "_"), ext)
+                        });
+                        results.push(ArtifactFile {
+                            path,
+                            category: "Code (DEV)".to_string(),
+                            language: if current_lang.is_empty() {
+                                "rust".to_string()
+                            } else {
+                                current_lang.clone()
+                            },
+                            content: body.to_string(),
+                        });
+                    }
+                    in_block = false;
+                    current_lang.clear();
+                    current_path = None;
+                    current_content.clear();
+                } else {
+                    in_block = true;
+                    let info = trimmed.trim_start_matches('`').trim();
+                    if let Some((lang, p)) = info.split_once(':') {
+                        current_lang = lang.trim().to_string();
+                        current_path = Some(p.trim().to_string());
+                    } else if let Some((lang, p)) = info.split_once(' ') {
+                        current_lang = lang.trim().to_string();
+                        current_path = Some(p.trim().to_string());
+                    } else {
+                        current_lang = info.to_string();
+                    }
+                }
+            } else if in_block {
+                if current_path.is_none() {
+                    let tl = line.trim();
+                    if tl.starts_with("// file:")
+                        || tl.starts_with("# file:")
+                        || tl.starts_with("/* file:")
+                        || tl.starts_with("// path:")
+                        || tl.starts_with("# path:")
+                    {
+                        let prefix = if tl.contains("file:") {
+                            "file:"
+                        } else {
+                            "path:"
+                        };
+                        if let Some(p) = tl.split(prefix).nth(1) {
+                            let clean = p.trim().trim_end_matches("*/").trim();
+                            if !clean.is_empty() {
+                                current_path = Some(clean.to_string());
+                            }
+                        }
+                    } else {
+                        current_content.push_str(line);
+                        current_content.push('\n');
+                    }
+                } else {
+                    current_content.push_str(line);
+                    current_content.push('\n');
+                }
+            }
+        }
+        results
+    }
+
     pub async fn sync_linear(&self, api_key_override: Option<String>) -> Result<LinearStatus> {
         if let Some(ref k) = api_key_override {
             let trimmed = k.trim();
@@ -1472,6 +1611,7 @@ impl Orchestrator {
         let _ = self.event_tx.send(FactoryEvent::TicketUpdated {
             ticket: ticket.clone(),
         });
+        self.sync_ticket_stage_to_linear(&ticket.id, KanbanStage::Design).await;
 
         let feature_str = format!(
             "[{}] {} — {}",
@@ -2139,7 +2279,8 @@ fi"#,
             }
 
             if let Some(tk) = updated_ticket {
-                let _ = self.event_tx.send(FactoryEvent::TicketUpdated { ticket: tk });
+                let _ = self.event_tx.send(FactoryEvent::TicketUpdated { ticket: tk.clone() });
+                self.sync_ticket_stage_to_linear(&tk.id, target_kanban_stage).await;
             }
 
             let _ = self.event_tx.send(FactoryEvent::AgentStepStarted {
@@ -2159,13 +2300,27 @@ fi"#,
                 thought: initial_thought.clone(),
             });
 
+            let role_instructions = if agent.role == AgentRole::Dev {
+                "You are the DEV agent (Software Craftsman). You are executing directly inside the repository workspace.\n\
+                YOUR CORE MISSION: INSPECT, MODIFY, AND IMPLEMENT THE REAL SOURCE CODE FILES IN THIS REPOSITORY FOR THIS TICKET.\n\
+                1. Inspect existing files, components, and project structure.\n\
+                2. Directly edit or create the required source files to implement the feature.\n\
+                3. You can execute git commands (`git add -A` and `git commit -m 'feat(...): ...'`) on the active feature branch.\n\
+                4. Also provide complete code blocks with relative paths (e.g. ```rust:backend/src/... or ```ts:frontend/src/...). \n\
+                First write a `<thinking>`...`</thinking>` block with 3 concise points on your technical plan, then summarize the files modified."
+            } else {
+                "Do NOT call any tools or modify repo files. First write a `<thinking>`...`</thinking>` block with 3 concise bullet points showing your internal Chain of Thought and architectural reasoning. If you have a question or assumption the human operator can steer, include `<question>your question</question>`. Then write your concise Markdown deliverable (120-180 words) covering your role according to Wagner Software Factory principles."
+            };
+
             let prompt = format!(
                 "{}\n\n\
                 Target Repository: {}\n\
                 Release Tag: {}\n\
                 Linear Ticket: {}\n\
                 Prior Factory Context:\n{}\n\n\
-                Do NOT call any tools or read/write files. First write a `<thinking>`...`</thinking>` block with 3 concise bullet points showing your internal Chain of Thought and architectural reasoning. If you have a question or assumption the human operator can steer, include `<question>your question</question>`. Then write your concise Markdown deliverable (120-180 words) covering your role ({}) according to Wagner Software Factory principles ({}).",
+                First write a `<thinking>`...`</thinking>` block with 3 concise bullet points showing your internal Chain of Thought and architectural reasoning. If you have a question or assumption the human operator can steer, include `<question>your question</question>`.\n\
+                {}\n\
+                Deliverable role: ({}) according to Wagner Software Factory principles ({}).",
                 agent.system_prompt,
                 workspace_dir.to_string_lossy(),
                 version_tag,
@@ -2175,6 +2330,7 @@ fi"#,
                 } else {
                     accumulated_context.clone()
                 },
+                role_instructions,
                 agent.role.title(),
                 agent.wagner_pillar
             );
@@ -2195,6 +2351,7 @@ fi"#,
             let start_instant = std::time::Instant::now();
             let (step_thoughts, pending_q, markdown_output, conv_id, usage, duration_secs) =
                 if execution_mode == "agy_live" {
+                    let agent_timeout = if agent.role == AgentRole::Dev { 180 } else { 45 };
                     match self
                         .agy
                         .run_agent_prompt(
@@ -2203,7 +2360,7 @@ fi"#,
                             &prompt,
                             Some(&workspace_dir.to_string_lossy()),
                             None,
-                            45,
+                            agent_timeout,
                         )
                         .await
                     {
@@ -2304,6 +2461,14 @@ fi"#,
                 }
             }
 
+            if agent.role == AgentRole::Dev {
+                let code_artifacts = Self::extract_code_blocks_from_markdown(&markdown_output, &version_tag);
+                if !code_artifacts.is_empty() {
+                    artifacts.retain(|a| !a.category.contains("Code"));
+                    artifacts.extend(code_artifacts);
+                }
+            }
+
             let role_md_file = ArtifactFile {
                 path: format!(".agents/{}.md", agent.role.code().to_lowercase()),
                 category: format!("{} Deliverable", agent.role.code()),
@@ -2312,8 +2477,72 @@ fi"#,
             };
             artifacts.insert(0, role_md_file);
 
+            // Physically write all generated artifacts to disk in the target workspace directory!
+            for art in &artifacts {
+                let clean_path = art.path.trim_start_matches(['/', '\\']);
+                if clean_path.contains("..") {
+                    continue;
+                }
+                let dest = workspace_dir.join(clean_path);
+                if let Some(parent) = dest.parent() {
+                    let _ = tokio::fs::create_dir_all(parent).await;
+                }
+                if let Err(err) = tokio::fs::write(&dest, &art.content).await {
+                    warn!("Failed to write artifact file {:?}: {}", dest, err);
+                } else {
+                    info!("Successfully wrote factory artifact to disk: {:?}", dest);
+                }
+            }
+
             let mut step_thoughts = step_thoughts;
             let mut markdown_output = markdown_output;
+
+            // If this is the DEV role, stage all source code modifications and commit them directly on the feature branch!
+            if agent.role == AgentRole::Dev {
+                let commit_slug = ticket_identifier.as_deref().unwrap_or("WAGNER");
+                let dev_commit_script = format!(
+                    r#"cd "{ws}" 2>/dev/null || exit 0
+if [ ! -d .git ] && [ -d ../.git ]; then cd ..; fi
+if [ -d .git ]; then
+  git add -A
+  if ! git diff --cached --quiet; then
+    git -c user.name="WAGNER Dev Agent" -c user.email="wagner-dev@softwarefactory.local" commit -m "feat({slug}): implement source code changes for {ver}" || true
+    echo "committed"
+  fi
+fi"#,
+                    ws = workspace_dir.to_string_lossy(),
+                    slug = commit_slug,
+                    ver = version_tag,
+                );
+                if let Ok(out) = tokio::process::Command::new("bash")
+                    .arg("-c")
+                    .arg(&dev_commit_script)
+                    .output()
+                    .await
+                {
+                    let s = String::from_utf8_lossy(&out.stdout);
+                    if s.contains("committed") {
+                        info!("DEV agent successfully executed git add & git commit on feature branch");
+                        let dev_git_cot = ThoughtEntry {
+                            id: format!("cot-{}", &Uuid::new_v4().to_string()[..8]),
+                            role: AgentRole::Dev,
+                            kind: "tool_probe".to_string(),
+                            content: format!(
+                                "Committed implementation code to feature branch (`git add -A && git commit -m 'feat({}): ...'`).",
+                                commit_slug
+                            ),
+                            timestamp: Utc::now(),
+                        };
+                        let _ = self.event_tx.send(FactoryEvent::AgentThoughtEmitted {
+                            run_id: run_id.clone(),
+                            ticket_id: ticket_id.clone(),
+                            role: AgentRole::Dev,
+                            thought: dev_git_cot.clone(),
+                        });
+                        step_thoughts.push(dev_git_cot);
+                    }
+                }
+            }
 
             // If this is the PR Agent role, automatically create the Git branch against `main`, push to GitHub, and generate the Pull Request URL for human review
             if agent.role == AgentRole::Pr {
@@ -2615,6 +2844,7 @@ fi"#,
         self.persist().await;
 
         if let Some(ref tid) = ticket_id {
+            self.sync_ticket_stage_to_linear(tid, KanbanStage::PrReview).await;
             let key_opt = self.linear_api_key.read().await.clone();
             if let Some(api_key) = key_opt {
                 LinearClient::post_issue_comment(&api_key, tid, &release_notes).await;
@@ -2835,18 +3065,23 @@ if [ ! -d .git ] && [ -d ../.git ]; then
 fi
 if [ -d .git ]; then
   git fetch origin "{base}" 2>/dev/null || true
+  git add -A 2>/dev/null || true
+  if ! git diff --cached --quiet 2>/dev/null; then
+    git -c user.name="WAGNER PR Agent" -c user.email="wagner-pr@softwarefactory.local" commit -m "docs({slug}): final delivery & living docs for {ver}" 2>/dev/null || true
+  fi
   BASE_SHA=$(git rev-parse --verify -q "refs/remotes/origin/{base}" || git rev-parse --verify -q "refs/heads/{base}" || git rev-parse --verify -q refs/remotes/origin/master || git rev-parse --verify -q refs/remotes/origin/main || git rev-parse --verify -q HEAD || true)
-  if [ -n "$BASE_SHA" ]; then
+  PARENT_SHA=$(git rev-parse --verify -q "refs/heads/{branch}" || echo "$BASE_SHA")
+  if [ -n "$PARENT_SHA" ]; then
     TMP_IDX=$(mktemp -u)
-    GIT_INDEX_FILE="$TMP_IDX" git read-tree "$BASE_SHA" >/dev/null 2>&1 || true
-    GIT_INDEX_FILE="$TMP_IDX" git add -u >/dev/null 2>&1 || true
+    GIT_INDEX_FILE="$TMP_IDX" git read-tree "$PARENT_SHA" >/dev/null 2>&1 || true
+    GIT_INDEX_FILE="$TMP_IDX" git add -A >/dev/null 2>&1 || true
     TREE_SHA=$(GIT_INDEX_FILE="$TMP_IDX" git write-tree 2>/dev/null || true)
+    PARENT_TREE=$(git rev-parse --verify -q "$PARENT_SHA^{{tree}}" 2>/dev/null || true)
     rm -f "$TMP_IDX"
-    if [ -n "$TREE_SHA" ]; then
-      COMMIT_SHA=$(GIT_AUTHOR_NAME="WAGNER PR Agent" GIT_AUTHOR_EMAIL="wagner-pr@softwarefactory.local" GIT_COMMITTER_NAME="WAGNER PR Agent" GIT_COMMITTER_EMAIL="wagner-pr@softwarefactory.local" git commit-tree "$TREE_SHA" -p "$BASE_SHA" -m "feat({slug}): {ver} automated WAGNER delivery" 2>/dev/null || true)
+    if [ -n "$TREE_SHA" ] && [ "$TREE_SHA" != "$PARENT_TREE" ]; then
+      COMMIT_SHA=$(GIT_AUTHOR_NAME="WAGNER PR Agent" GIT_AUTHOR_EMAIL="wagner-pr@softwarefactory.local" GIT_COMMITTER_NAME="WAGNER PR Agent" GIT_COMMITTER_EMAIL="wagner-pr@softwarefactory.local" git commit-tree "$TREE_SHA" -p "$PARENT_SHA" -m "docs({slug}): living docs and PR deliverable" 2>/dev/null || true)
       if [ -n "$COMMIT_SHA" ]; then
         git update-ref "refs/heads/{branch}" "$COMMIT_SHA" 2>/dev/null || true
-        git update-ref "refs/heads/{base}" "$BASE_SHA" 2>/dev/null || true
       fi
     fi
   fi
@@ -2856,7 +3091,7 @@ fi
             ws = workspace_dir.to_string_lossy(),
             base = base_branch,
             branch = branch_name,
-            slug = ticket_identifier.unwrap_or("WAGNER"),
+            slug = Self::clean_ticket_identifier(ticket_identifier.unwrap_or("WAGNER")),
             ver = version_tag,
         );
 
@@ -2872,7 +3107,7 @@ fi
             }
         }
 
-        // 2. Push both `{base_branch}` (`master`) and `{branch_name}` (`factory-XXX`) to `origin`
+        // 2. Push `{branch_name}` (`factory-XXX`) to `origin`
         let _ = tokio::time::timeout(
             std::time::Duration::from_secs(15),
             tokio::process::Command::new("git")
@@ -2880,18 +3115,27 @@ fi
                 .arg(workspace_dir)
                 .arg("push")
                 .arg("origin")
-                .arg(format!("refs/heads/{}:refs/heads/{}", base_branch, base_branch))
                 .arg(format!("refs/heads/{}:refs/heads/{}", branch_name, branch_name))
                 .arg("--force")
                 .output(),
         )
         .await;
 
+        let clean_slug = Self::clean_ticket_identifier(ticket_identifier.unwrap_or("WAGNER"));
+        let raw_title = feature_request
+            .lines()
+            .next()
+            .unwrap_or(feature_request)
+            .trim();
+        let clean_feature_title = if let Some(idx) = raw_title.find(']') {
+            raw_title[idx + 1..].trim().trim_start_matches(['—', '-', ':']).trim()
+        } else {
+            raw_title
+        };
         let pr_title = format!(
-            "feat({}): {} ({})",
-            ticket_identifier.unwrap_or("WAGNER"),
-            feature_request.chars().take(72).collect::<String>(),
-            version_tag
+            "feat({}): {}",
+            clean_slug,
+            clean_feature_title.chars().take(80).collect::<String>()
         );
         let pr_body = format!(
             "## WAGNER Autonomous Software Factory — Pull Request\n\n\
@@ -3116,5 +3360,56 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_extract_code_blocks_from_markdown() {
+        let md = r#"
+### DEV Deliverable
+Here is the code:
+
+```rust:src/feature_test.rs
+pub fn run() -> bool { true }
+```
+
+And another file:
+```ts
+// file: frontend/src/utils/i18n.ts
+export const t = (k: string) => k;
+```
+"#;
+        let artifacts = Orchestrator::extract_code_blocks_from_markdown(md, "v1.0.0");
+        assert_eq!(artifacts.len(), 2);
+        assert_eq!(artifacts[0].path, "src/feature_test.rs");
+        assert_eq!(artifacts[0].language, "rust");
+        assert_eq!(artifacts[0].content, "pub fn run() -> bool { true }");
+
+        assert_eq!(artifacts[1].path, "frontend/src/utils/i18n.ts");
+        assert_eq!(artifacts[1].language, "ts");
+        assert_eq!(artifacts[1].content, "export const t = (k: string) => k;");
+    }
+
+    #[test]
+    fn test_clean_ticket_identifier() {
+        assert_eq!(
+            Orchestrator::clean_ticket_identifier("[CAI-8](https://linear.app/team/issue/CAI-8)"),
+            "CAI-8"
+        );
+        assert_eq!(
+            Orchestrator::clean_ticket_identifier(" [CAI-15] "),
+            "CAI-15"
+        );
+        assert_eq!(
+            Orchestrator::clean_ticket_identifier("CAI-20"),
+            "CAI-20"
+        );
+        assert_eq!(
+            Orchestrator::clean_ticket_identifier("CAI-17: granular state sync"),
+            "CAI-17"
+        );
+        assert_eq!(
+            Orchestrator::branch_name_for_ticket(Some("[CAI-19](url)"), "v1.5.0"),
+            "factory-CAI-19"
+        );
     }
 }

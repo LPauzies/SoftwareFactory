@@ -81,7 +81,7 @@ impl AgentRole {
             AgentRole::Po | AgentRole::Expert | AgentRole::Archi => KanbanStage::Design,
             AgentRole::Dev => KanbanStage::Coding,
             AgentRole::Qa => KanbanStage::Testing,
-            AgentRole::Ops => KanbanStage::Done,
+            AgentRole::Ops => KanbanStage::Testing,
             AgentRole::Pr => KanbanStage::PrReview,
         }
     }
@@ -142,12 +142,22 @@ pub struct FactoryTicket {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LinearWorkflowState {
+    pub id: String,
+    pub name: String,
+    pub state_type: String, // "backlog", "unstarted", "started", "completed", "canceled"
+    pub team_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LinearStatus {
     pub connected: bool,
     pub has_api_key: bool,
     pub organization_name: Option<String>,
     pub viewer_name: Option<String>,
     pub last_synced_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub workflow_states: Vec<LinearWorkflowState>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
