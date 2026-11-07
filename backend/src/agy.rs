@@ -243,7 +243,6 @@ impl AgyBridge {
         if let Some(dir) = workspace_dir {
             if Path::new(dir).exists() {
                 cmd.arg("--add-dir").arg(dir);
-                cmd.current_dir(dir);
             }
         }
 
