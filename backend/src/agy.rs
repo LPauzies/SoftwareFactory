@@ -211,6 +211,7 @@ impl AgyBridge {
     }
 
     /// Execute a single non-interactive turn against Antigravity (`agy --mode=auto`) via subprocess.
+    /// Runs until completion with full auto-approved permissions and no artificial timeout.
     pub async fn run_agent_prompt(
         &self,
         model: &str,
@@ -218,16 +219,16 @@ impl AgyBridge {
         prompt: &str,
         workspace_dir: Option<&str>,
         conversation_id: Option<&str>,
-        timeout_secs: u64,
     ) -> Result<AgyPrintResponse> {
         info!(
-            "Spawning agy subprocess (--mode=auto): binary={}, model={}, effort={}",
+            "Spawning agy subprocess (--mode=auto --dangerously-skip-permissions): binary={}, model={}, effort={}",
             self.binary_path, model, effort
         );
 
         let mut cmd = Command::new(&self.binary_path);
         cmd.kill_on_drop(true)
             .arg("--mode=auto")
+            .arg("--dangerously-skip-permissions")
             .arg("--print")
             .arg(prompt)
             .arg("--model")
@@ -253,16 +254,9 @@ impl AgyBridge {
             }
         }
 
-        let fut = cmd.output();
-        let output = match timeout(Duration::from_secs(timeout_secs), fut).await {
-            Ok(Ok(out)) => out,
-            Ok(Err(e)) => return Err(anyhow!("Failed to spawn agy subprocess: {}", e)),
-            Err(_) => {
-                return Err(anyhow!(
-                    "agy subprocess timed out after {} seconds",
-                    timeout_secs
-                ))
-            }
+        let output = match cmd.output().await {
+            Ok(out) => out,
+            Err(e) => return Err(anyhow!("Failed to spawn agy subprocess: {}", e)),
         };
 
         let stdout_str = String::from_utf8_lossy(&output.stdout).to_string();

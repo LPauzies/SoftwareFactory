@@ -689,7 +689,6 @@ async fn consult_agent_handler(
             &full_prompt,
             None,
             req.conversation_id.as_deref(),
-            45,
         )
         .await
     {

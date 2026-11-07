@@ -1877,7 +1877,6 @@ if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
                         &prompt,
                         Some(&repo_path),
                         existing_step.agy_conversation_id.as_deref(),
-                        45,
                     )
                     .await
                 {
@@ -2521,8 +2520,8 @@ fi"#,
             let start_instant = std::time::Instant::now();
 
             let (po_output, expert_output) = if execution_mode == "agy_live" {
-                let po_fut = self.agy.run_agent_prompt(&po_agent.model, &po_agent.effort, &po_prompt, Some(&ws_str), None, 35);
-                let expert_fut = self.agy.run_agent_prompt(&expert_agent.model, &expert_agent.effort, &expert_prompt, Some(&ws_str), None, 35);
+                let po_fut = self.agy.run_agent_prompt(&po_agent.model, &po_agent.effort, &po_prompt, Some(&ws_str), None);
+                let expert_fut = self.agy.run_agent_prompt(&expert_agent.model, &expert_agent.effort, &expert_prompt, Some(&ws_str), None);
                 tokio::join!(po_fut, expert_fut)
             } else {
                 (
@@ -2767,15 +2766,14 @@ fi"#,
             });
 
             let role_instructions = if agent.role == AgentRole::Dev {
-                "You are the DEV agent (Software Craftsman). You are executing directly inside the repository workspace.\n\
+                "You are the DEV agent (Software Craftsman). You are executing directly inside the repository workspace with full auto-approved permissions.\n\
                 MANDATORY QUALITY GATE REQUIREMENT: YOU MUST MODIFY OR CREATE REAL SOURCE CODE FILES IN THIS REPOSITORY (e.g. `backend/src/...`, `frontend/src/...`).\n\
                 DO NOT just submit markdown documentation or plans. Deliveries that only modify `.md` files without actual source code changes are REJECTED BY THE QUALITY GATE AND WILL FAIL THE RUN.\n\
                 1. Inspect existing files, components, and project structure.\n\
-                2. Directly edit or create the required source files to implement the feature in their real paths (e.g. `backend/src/...`, `frontend/src/...`).\n\
+                2. Directly use your editing tools (`edit_file`, `write_file`) or bash commands to implement the feature in real files (e.g. `backend/src/...`, `frontend/src/...`).\n\
                 3. NEVER create dummy or placeholder files like `src/feature_*.rs` or fake directories at the repository root.\n\
-                4. You can execute git commands (`git add -A` and `git commit -m 'feat(...): ...'`) on the active feature branch.\n\
-                5. If you provide code blocks in markdown, specify their relative path explicitly (e.g. ```rust:backend/src/... or ```ts:frontend/src/...). \n\
-                First write a `<thinking>`...`</thinking>` block with 3 concise points on your technical plan, then summarize the files modified."
+                4. If you output code blocks in markdown, specify their relative path explicitly (e.g. ```rust:backend/src/... or ```ts:frontend/src/...).\n\
+                First write a `<thinking>`...`</thinking>` block with 3 concise points on your technical plan, then write the code and summarize the files modified."
             } else {
                 "Do NOT call any tools or modify repo files. First write a `<thinking>`...`</thinking>` block with 3 concise bullet points showing your internal Chain of Thought and architectural reasoning. If you have a question or assumption the human operator can steer, include `<question>your question</question>`. Then write your concise Markdown deliverable (120-180 words) covering your role according to Wagner Software Factory principles."
             };
@@ -2843,11 +2841,6 @@ fi"#,
             let start_instant = std::time::Instant::now();
             let (step_thoughts, pending_q, markdown_output, conv_id, usage, duration_secs) =
                 if execution_mode == "agy_live" {
-                    let agent_timeout = match agent.role {
-                        AgentRole::Dev => 420, // 7 minutes for DEV so complex coding tasks have plenty of time
-                        AgentRole::Archi => 60,
-                        _ => 45,
-                    };
                     match self
                         .agy
                         .run_agent_prompt(
@@ -2856,7 +2849,6 @@ fi"#,
                             &prompt,
                             Some(&workspace_dir.to_string_lossy()),
                             None,
-                            agent_timeout,
                         )
                         .await
                     {
@@ -3606,7 +3598,7 @@ fi"#,
             );
             match self
                 .agy
-                .run_agent_prompt("gemini-3.8-flash-low", "low", &prompt, None, None, 25)
+                .run_agent_prompt("gemini-3.8-flash-low", "low", &prompt, None, None)
                 .await
             {
                 Ok(resp) => (
