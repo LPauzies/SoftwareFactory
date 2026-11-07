@@ -2653,13 +2653,14 @@ fi"#,
                 workspace_dir.to_string_lossy()
             );
 
+            let inception_start_utc = Utc::now();
             let mut updated_ticket = None;
             {
                 let mut guard = self.state.write().await;
                 if let Some(run) = guard.runs.iter_mut().find(|r| r.id == run_id) {
                     if let Some(step0) = run.steps.get_mut(0) {
                         step0.status = StepStatus::Running;
-                        step0.started_at = Some(Utc::now());
+                        step0.started_at = Some(inception_start_utc);
                         step0.thinking_log.push(po_thought.clone());
                         step0.summary = format!(
                             "Parallel Inception: Running PO ({}) in {}...",
@@ -2669,7 +2670,7 @@ fi"#,
                     }
                     if let Some(step1) = run.steps.get_mut(1) {
                         step1.status = StepStatus::Running;
-                        step1.started_at = Some(Utc::now());
+                        step1.started_at = Some(inception_start_utc);
                         step1.thinking_log.push(expert_thought.clone());
                         step1.summary = format!(
                             "Parallel Inception: Running Business Expert ({}) in {}...",
@@ -2701,6 +2702,7 @@ fi"#,
                 title: po_agent.title.clone(),
                 model: po_agent.model.clone(),
                 agy_command: po_cli_cmd.clone(),
+                started_at: Some(inception_start_utc),
             });
             let _ = self.event_tx.send(FactoryEvent::AgentThoughtEmitted {
                 run_id: run_id.clone(),
@@ -2717,6 +2719,7 @@ fi"#,
                 title: expert_agent.title.clone(),
                 model: expert_agent.model.clone(),
                 agy_command: expert_cli_cmd.clone(),
+                started_at: Some(inception_start_utc),
             });
             let _ = self.event_tx.send(FactoryEvent::AgentThoughtEmitted {
                 run_id: run_id.clone(),
@@ -2842,7 +2845,7 @@ fi"#,
                 wagner_pillar: po_agent.wagner_pillar.clone(),
                 model: po_agent.model.clone(),
                 status: StepStatus::Completed,
-                started_at: Some(Utc::now()),
+                started_at: Some(inception_start_utc),
                 completed_at: Some(Utc::now()),
                 duration_seconds: (po_dur * 100.0).round() / 100.0,
                 agy_conversation_id: po_cid,
@@ -2861,7 +2864,7 @@ fi"#,
                 wagner_pillar: expert_agent.wagner_pillar.clone(),
                 model: expert_agent.model.clone(),
                 status: StepStatus::Completed,
-                started_at: Some(Utc::now()),
+                started_at: Some(inception_start_utc),
                 completed_at: Some(Utc::now()),
                 duration_seconds: (exp_dur * 100.0).round() / 100.0,
                 agy_conversation_id: exp_cid,
@@ -2939,13 +2942,15 @@ fi"#,
                 timestamp: Utc::now(),
             };
 
+            let step_start_utc = Utc::now();
             let mut updated_ticket = None;
             {
                 let mut guard = self.state.write().await;
                 if let Some(run) = guard.runs.iter_mut().find(|r| r.id == run_id) {
                     if let Some(step) = run.steps.get_mut(idx) {
                         step.status = StepStatus::Running;
-                        step.started_at = Some(Utc::now());
+                        step.started_at = Some(step_start_utc);
+                        step.completed_at = None;
                         step.thinking_log.push(initial_thought.clone());
                         step.summary = format!(
                             "Running {} via Antigravity (agy) in {}...",
@@ -2977,6 +2982,7 @@ fi"#,
                 title: agent.title.clone(),
                 model: agent.model.clone(),
                 agy_command: cli_cmd.clone(),
+                started_at: Some(step_start_utc),
             });
 
             let _ = self.event_tx.send(FactoryEvent::AgentThoughtEmitted {
@@ -3470,7 +3476,7 @@ fi"#,
                 } else {
                     StepStatus::Completed
                 },
-                started_at: Some(Utc::now()),
+                started_at: Some(step_start_utc),
                 completed_at: if has_question { None } else { Some(Utc::now()) },
                 duration_seconds: (duration_secs * 100.0).round() / 100.0,
                 agy_conversation_id: conv_id,

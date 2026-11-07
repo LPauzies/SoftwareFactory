@@ -163,6 +163,9 @@ export interface StepActivityInfo {
   elapsedSeconds: number
   lastSignalAgeSeconds: number | null
   errorMessage: string | null
+  startedAt: string | null
+  completedAt: string | null
+  durationSeconds: number
 }
 
 export interface TicketActivityInfo {
@@ -173,6 +176,7 @@ export interface TicketActivityInfo {
   failedRole: string | null
   elapsedSeconds: number
   errorMessage: string | null
+  startedAt: string | null
 }
 
 // shortcut: client-side activity & crash state derived from SSE step events and timestamps, upgrade to dedicated backend process heartbeat ping if sub-second OS PID liveness is needed
@@ -197,6 +201,9 @@ export function useAgentActivityState(
       elapsedSeconds: 0,
       lastSignalAgeSeconds: null,
       errorMessage: null,
+      startedAt: null,
+      completedAt: null,
+      durationSeconds: 0,
     }
   }
 
@@ -237,6 +244,10 @@ export function useAgentActivityState(
     (run?.status === 'failed' ||
       (ticket != null && !ticket.active_role && run?.status !== 'running'))
 
+  const startedAt = step.started_at || null
+  const completedAt = step.completed_at || null
+  const durationSeconds = step.duration_seconds || 0
+
   if (
     step.status === 'failed' ||
     step.quality_gate_passed === false ||
@@ -258,6 +269,9 @@ export function useAgentActivityState(
       elapsedSeconds,
       lastSignalAgeSeconds,
       errorMessage,
+      startedAt,
+      completedAt,
+      durationSeconds,
     }
   }
 
@@ -273,6 +287,9 @@ export function useAgentActivityState(
       elapsedSeconds,
       lastSignalAgeSeconds,
       errorMessage: null,
+      startedAt,
+      completedAt,
+      durationSeconds,
     }
   }
 
@@ -287,10 +304,13 @@ export function useAgentActivityState(
       elapsedSeconds,
       lastSignalAgeSeconds,
       errorMessage: null,
+      startedAt,
+      completedAt,
+      durationSeconds,
     }
   }
 
-  if (step.status === 'completed') {
+  if (step.status === 'completed' || step.status === 'succeeded') {
     return {
       state: 'completed',
       isRunning: false,
@@ -298,6 +318,9 @@ export function useAgentActivityState(
       elapsedSeconds,
       lastSignalAgeSeconds,
       errorMessage: null,
+      startedAt,
+      completedAt,
+      durationSeconds,
     }
   }
 
@@ -309,6 +332,9 @@ export function useAgentActivityState(
       elapsedSeconds: 0,
       lastSignalAgeSeconds,
       errorMessage: null,
+      startedAt,
+      completedAt,
+      durationSeconds: 0,
     }
   }
 
@@ -319,6 +345,9 @@ export function useAgentActivityState(
     elapsedSeconds: 0,
     lastSignalAgeSeconds,
     errorMessage: null,
+    startedAt,
+    completedAt,
+    durationSeconds: 0,
   }
 }
 
@@ -340,12 +369,15 @@ export function evaluateTicketActivity(
       failedRole: null,
       elapsedSeconds: 0,
       errorMessage: null,
+      startedAt: null,
     }
   }
 
   const activeStep = ticket.active_role
     ? run?.steps?.find((s) => s.role === ticket.active_role) || null
     : null
+
+  const startedAt = activeStep?.started_at || run?.created_at || null
 
   if (activeStep) {
     const stepInfo = useAgentActivityState(activeStep, ticket, run, options)
@@ -358,6 +390,7 @@ export function evaluateTicketActivity(
         failedRole: activeStep.role,
         elapsedSeconds: stepInfo.elapsedSeconds,
         errorMessage: stepInfo.errorMessage,
+        startedAt,
       }
     }
   }
@@ -373,6 +406,7 @@ export function evaluateTicketActivity(
         ? useAgentActivityState(activeStep, ticket, run, options).elapsedSeconds
         : 0,
       errorMessage: null,
+      startedAt,
     }
   }
 
@@ -388,6 +422,7 @@ export function evaluateTicketActivity(
       failedRole: null,
       elapsedSeconds: stepInfo?.elapsedSeconds ?? 0,
       errorMessage: null,
+      startedAt,
     }
   }
 
@@ -409,6 +444,7 @@ export function evaluateTicketActivity(
         errorMessage:
           info?.errorMessage ||
           `Le pipeline a échoué (${run.version_tag}).`,
+        startedAt: crashedStep?.started_at || run.created_at || null,
       }
     }
   }
@@ -422,6 +458,7 @@ export function evaluateTicketActivity(
       failedRole: null,
       elapsedSeconds: Math.round(run?.total_duration_seconds || 0),
       errorMessage: null,
+      startedAt: run?.created_at || null,
     }
   }
 
@@ -433,6 +470,7 @@ export function evaluateTicketActivity(
     failedRole: null,
     elapsedSeconds: 0,
     errorMessage: null,
+    startedAt: null,
   }
 }
 
@@ -1052,8 +1090,9 @@ export const useFactoryStore = defineStore('factory', () => {
         const step = r.steps.find((s) => s.role === evt.role)
         if (step) {
           step.status = 'running'
-          step.started_at = step.started_at || new Date().toISOString()
+          step.started_at = evt.started_at || step.started_at || new Date().toISOString()
           step.completed_at = null
+          step.duration_seconds = 0
           step.agy_command = evt.agy_command
         }
       }

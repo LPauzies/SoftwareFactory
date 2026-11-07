@@ -436,6 +436,8 @@ pub enum FactoryEvent {
         title: String,
         model: String,
         agy_command: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        started_at: Option<DateTime<Utc>>,
     },
     AgentThoughtEmitted {
         run_id: String,

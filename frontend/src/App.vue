@@ -283,6 +283,36 @@ function formatTicketCreatedAt(tk: FactoryTicket): string {
   })
 }
 
+function formatTime(raw?: string | null): string {
+  if (!raw) return ''
+  const d = new Date(raw)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleTimeString('fr-FR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+}
+
+function formatDurationSec(seconds?: number | null): string {
+  if (seconds === undefined || seconds === null) return '0s'
+  if (seconds < 60) return `${Number(seconds.toFixed(1))}s`
+  const m = Math.floor(seconds / 60)
+  const s = Math.round(seconds % 60)
+  return `${m}m ${s}s`
+}
+
+function currentRunTotalDuration(run?: any): string {
+  if (!run) return '0s'
+  let total: number = run.total_duration_seconds || 0
+  const runningStep = run.steps?.find((s: any) => s.status === 'running')
+  if (runningStep) {
+    const act = stepActivity(runningStep)
+    total += act.elapsedSeconds
+  }
+  return formatDurationSec(total)
+}
+
 function ticketsForColumn(colId: KanbanStage): FactoryTicket[] {
   if (colId === 'done') {
     return store.projectTickets
@@ -792,6 +822,14 @@ async function handleSaveAgentModels() {
                 >
                   · {{ ticketActivity(tk).elapsedSeconds }}s
                 </span>
+                <span
+                  v-if="ticketActivity(tk).startedAt"
+                  class="running-started mono"
+                  style="font-size: 0.68rem; opacity: 0.85; margin-left: 0.2rem"
+                  :title="`Agent démarré à ${formatTime(ticketActivity(tk).startedAt)}`"
+                >
+                  (démarré à {{ formatTime(ticketActivity(tk).startedAt) }})
+                </span>
               </span>
               <button
                 class="btn btn-danger"
@@ -800,6 +838,35 @@ async function handleSaveAgentModels() {
               >
                 Kill Agent
               </button>
+            </div>
+
+            <!-- Mini Pipeline Steps Tracker on Kanban Card -->
+            <div
+              v-if="store.runForTicket(tk)?.steps?.length"
+              class="card-pipeline-timeline"
+              :title="`Pipeline ${store.runForTicket(tk)?.version_tag} — ${store.runForTicket(tk)?.total_duration_seconds}s totales`"
+            >
+              <div
+                v-for="s in store.runForTicket(tk)!.steps"
+                :key="s.role"
+                class="card-pipeline-step"
+                :class="[
+                  stepActivity(s).state,
+                  { active: tk.active_role === s.role }
+                ]"
+                :title="`${s.role}: ${stepActivity(s).isRunning ? `en cours (${stepActivity(s).elapsedSeconds}s)` : s.duration_seconds > 0 ? `terminé en ${s.duration_seconds}s` : s.status}${s.started_at ? ` · démarré à ${formatTime(s.started_at)}` : ''}`"
+              >
+                <span class="step-tag-role">{{ s.role }}</span>
+                <span v-if="stepActivity(s).isRunning" class="step-tag-dur mono">
+                  {{ stepActivity(s).elapsedSeconds }}s
+                </span>
+                <span v-else-if="s.status === 'completed' || s.status === 'succeeded'" class="step-tag-dur mono">
+                  {{ s.duration_seconds }}s
+                </span>
+                <span v-else-if="stepActivity(s).isCrashed" class="step-tag-dur mono">
+                  💥
+                </span>
+              </div>
             </div>
 
             <!-- Crashed / Failed agent indicator on card -->
@@ -1204,10 +1271,21 @@ async function handleSaveAgentModels() {
                 gap: 0.5rem;
               "
             >
-              <span class="field-label">
-                {{ store.selectedTicketRun.total_duration_seconds }}s ·
-                {{ store.selectedTicketRun.total_tokens.toLocaleString() }} tokens
-              </span>
+              <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap">
+                <span
+                  v-if="store.selectedTicketRun.created_at"
+                  class="field-label mono"
+                  style="font-size: 0.74rem; opacity: 0.9"
+                >
+                  🚀 Lancé à {{ formatTime(store.selectedTicketRun.created_at) }}
+                </span>
+                <span class="field-label mono" style="font-size: 0.74rem; font-weight: 600">
+                  ⏱ Durée totale : {{ currentRunTotalDuration(store.selectedTicketRun) }}
+                </span>
+                <span class="field-label" style="font-size: 0.74rem">
+                  · {{ store.selectedTicketRun.total_tokens.toLocaleString() }} tokens
+                </span>
+              </div>
               <div style="display: flex; gap: 0.35rem">
                 <button
                   class="btn"
@@ -1274,19 +1352,32 @@ async function handleSaveAgentModels() {
                     ✓
                   </span>
                   <span style="font-weight: 600">{{ sIdx + 1 }}. {{ step.role }}</span>
+                  <span
+                    v-if="step.started_at"
+                    class="step-pill-time-chip mono"
+                    :title="`Démarré à ${formatTime(step.started_at)}`"
+                  >
+                    {{ formatTime(step.started_at) }}
+                  </span>
                 </div>
                 <div class="step-pill-sub mono">
                   <template v-if="stepActivity(step).isRunning">
-                    running · {{ stepActivity(step).elapsedSeconds }}s
+                    ⚡ en cours · {{ stepActivity(step).elapsedSeconds }}s
                   </template>
                   <template v-else-if="stepActivity(step).isCrashed">
-                    crashed / failed
+                    💥 échoué · {{ step.duration_seconds || stepActivity(step).elapsedSeconds }}s
                   </template>
                   <template v-else-if="stepActivity(step).state === 'waiting'">
-                    paused (question)
+                    ⚠ en pause · {{ stepActivity(step).elapsedSeconds }}s
+                  </template>
+                  <template v-else-if="step.status === 'succeeded' || step.status === 'completed'">
+                    ✓ terminé en {{ step.duration_seconds }}s
+                  </template>
+                  <template v-else-if="step.status === 'skipped'">
+                    ⊘ ignoré
                   </template>
                   <template v-else>
-                    {{ step.status }} ({{ step.thinking_log?.length || 0 }})
+                    ⏳ en attente
                   </template>
                 </div>
               </div>
@@ -1326,32 +1417,40 @@ async function handleSaveAgentModels() {
                   <div>
                     <div class="step-activity-title">
                       <template v-if="activeStepActivity.isRunning">
-                        Agent {{ activeDrawerStep.role }} est en train de tourner ({{ activeStepActivity.elapsedSeconds }}s écoulées)
+                        Agent {{ activeDrawerStep.role }} en cours d'exécution ({{ activeStepActivity.elapsedSeconds }}s écoulées)
                       </template>
                       <template v-else-if="activeStepActivity.isCrashed">
-                        Agent {{ activeDrawerStep.role }} a planté / échoué à cette étape
+                        Agent {{ activeDrawerStep.role }} a planté / échoué après {{ activeDrawerStep.duration_seconds || activeStepActivity.elapsedSeconds }}s
                       </template>
                       <template v-else-if="activeStepActivity.state === 'waiting'">
-                        Agent {{ activeDrawerStep.role }} en pause — en attente de votre réponse
+                        Agent {{ activeDrawerStep.role }} en pause — en attente de votre réponse ({{ activeStepActivity.elapsedSeconds }}s)
                       </template>
                       <template v-else-if="activeStepActivity.state === 'completed'">
-                        Étape {{ activeDrawerStep.role }} terminée avec succès ({{ activeDrawerStep.duration_seconds }}s)
+                        Étape {{ activeDrawerStep.role }} terminée avec succès en {{ activeDrawerStep.duration_seconds }}s
                       </template>
                       <template v-else>
-                        Étape {{ activeDrawerStep.role }} en attente d'exécution ({{ activeDrawerStep.status }})
+                        Étape {{ activeDrawerStep.role }} en attente d'exécution
                       </template>
                     </div>
-                    <div
-                      v-if="activeStepActivity.isRunning"
-                      class="step-activity-detail"
-                    >
-                      Processus <code>agy</code> actif · {{ activeDrawerStep.thinking_log?.length || 0 }} entrée(s) de raisonnement
-                      <span v-if="activeStepActivity.lastSignalAgeSeconds !== null">
-                        · dernier signal il y a {{ activeStepActivity.lastSignalAgeSeconds }}s
+                    <div class="step-activity-detail">
+                      <span v-if="activeDrawerStep.started_at" class="step-time-badge mono">
+                        🕒 Démarré à {{ formatTime(activeDrawerStep.started_at) }}
+                      </span>
+                      <span v-if="activeDrawerStep.completed_at" class="step-time-badge mono">
+                        🏁 Terminé à {{ formatTime(activeDrawerStep.completed_at) }}
+                      </span>
+                      <span v-if="activeStepActivity.isRunning" class="step-time-badge mono">
+                        ⏱ En direct : {{ activeStepActivity.elapsedSeconds }}s
+                      </span>
+                      <span v-else-if="activeDrawerStep.duration_seconds > 0" class="step-time-badge mono">
+                        ⏱ Durée d'exécution : {{ activeDrawerStep.duration_seconds }}s
+                      </span>
+                      <span v-if="activeStepActivity.isRunning && activeStepActivity.lastSignalAgeSeconds !== null" class="step-time-badge mono">
+                        📡 Dernier signal il y a {{ activeStepActivity.lastSignalAgeSeconds }}s
                       </span>
                     </div>
                     <div
-                      v-else-if="activeStepActivity.isCrashed && activeStepActivity.errorMessage"
+                      v-if="activeStepActivity.isCrashed && activeStepActivity.errorMessage"
                       class="step-activity-detail crashed-detail"
                     >
                       {{ activeStepActivity.errorMessage }}

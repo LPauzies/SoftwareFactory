@@ -929,6 +929,87 @@ code, pre {
   animation-delay: 0.4s;
 }
 
+/* Card Pipeline Mini-Timeline */
+.card-pipeline-timeline {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-top: 0.45rem;
+  padding: 0.25rem 0.35rem;
+  background: rgba(0, 0, 0, 0.16);
+  border-radius: 5px;
+  overflow-x: auto;
+}
+
+.card-pipeline-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.12rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-grid);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.card-pipeline-step .step-tag-role {
+  font-weight: 600;
+}
+
+.card-pipeline-step .step-tag-dur {
+  font-size: 0.62rem;
+  opacity: 0.9;
+}
+
+.card-pipeline-step.completed {
+  background: rgba(35, 165, 90, 0.12);
+  border-color: rgba(35, 165, 90, 0.35);
+  color: var(--status-ok);
+}
+
+.card-pipeline-step.running {
+  background: rgba(0, 168, 252, 0.18);
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+  box-shadow: 0 0 6px rgba(0, 168, 252, 0.3);
+  animation: step-running-glow 2s ease-in-out infinite;
+}
+
+.card-pipeline-step.crashed {
+  background: rgba(242, 63, 67, 0.16);
+  border-color: var(--status-danger);
+  color: var(--status-danger);
+}
+
+.card-pipeline-step.waiting {
+  background: rgba(240, 178, 50, 0.16);
+  border-color: var(--status-warn);
+  color: var(--status-warn);
+}
+
+.step-pill-time-chip {
+  margin-left: auto;
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  background: rgba(0, 0, 0, 0.14);
+  padding: 0.08rem 0.28rem;
+  border-radius: 3px;
+}
+
+.step-time-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  background: rgba(0, 0, 0, 0.16);
+  padding: 0.15rem 0.42rem;
+  border-radius: 4px;
+  margin-right: 0.35rem;
+  margin-top: 0.22rem;
+  font-size: 0.72rem;
+}
+
 @keyframes agent-spin {
   to {
     transform: rotate(360deg);

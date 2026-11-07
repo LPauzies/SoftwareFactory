@@ -186,3 +186,42 @@ test('useAgentActivityState reports waiting when agent is paused on operator que
   assert.equal(info.isRunning, false)
   assert.equal(info.isCrashed, false)
 })
+
+test('useAgentActivityState and evaluateTicketActivity track exact startedAt, live running elapsed and completed duration', () => {
+  const startedAt = '2026-11-07T15:00:00.000Z'
+  const stepRunning = makeStep({
+    role: 'DEV',
+    status: 'running',
+    started_at: startedAt,
+  })
+  const ticket = makeTicket({ active_role: 'DEV' })
+  const run = makeRun([stepRunning])
+
+  const at12s = useAgentActivityState(stepRunning, ticket, run, {
+    nowMs: Date.parse('2026-11-07T15:00:12.000Z'),
+  })
+  assert.equal(at12s.startedAt, startedAt)
+  assert.equal(at12s.isRunning, true)
+  assert.equal(at12s.elapsedSeconds, 12)
+
+  const tkInfo = evaluateTicketActivity(ticket, run, {
+    nowMs: Date.parse('2026-11-07T15:00:12.000Z'),
+  })
+  assert.equal(tkInfo.startedAt, startedAt)
+  assert.equal(tkInfo.elapsedSeconds, 12)
+
+  // Step completed
+  const stepCompleted = makeStep({
+    role: 'DEV',
+    status: 'completed',
+    started_at: startedAt,
+    completed_at: '2026-11-07T15:00:15.500Z',
+    duration_seconds: 15.5,
+  })
+  const infoCompleted = useAgentActivityState(stepCompleted, ticket, run)
+  assert.equal(infoCompleted.state, 'completed')
+  assert.equal(infoCompleted.startedAt, startedAt)
+  assert.equal(infoCompleted.completedAt, '2026-11-07T15:00:15.500Z')
+  assert.equal(infoCompleted.durationSeconds, 15.5)
+  assert.equal(infoCompleted.elapsedSeconds, 16)
+})
