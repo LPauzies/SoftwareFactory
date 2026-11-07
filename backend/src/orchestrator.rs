@@ -692,13 +692,15 @@ impl Orchestrator {
                     r#"cd "{repo}" 2>/dev/null || exit 0
 git fetch origin master 2>/dev/null || true
 MERGED=0
-if git merge-base --is-ancestor "refs/remotes/origin/{branch}" "refs/remotes/origin/master" 2>/dev/null; then
+if git branch -r --merged origin/master 2>/dev/null | grep -qi "{branch}"; then
+  MERGED=1
+elif git merge-base --is-ancestor "refs/remotes/origin/{branch}" "refs/remotes/origin/master" 2>/dev/null; then
   MERGED=1
 elif git merge-base --is-ancestor "refs/heads/{branch}" "refs/heads/master" 2>/dev/null; then
   MERGED=1
-elif git log origin/master -n 35 --oneline 2>/dev/null | grep -qi "{slug}"; then
+elif git log origin/master --oneline 2>/dev/null | grep -qi "{slug}"; then
   MERGED=1
-elif git log master -n 35 --oneline 2>/dev/null | grep -qi "{slug}"; then
+elif git log master --oneline 2>/dev/null | grep -qi "{slug}"; then
   MERGED=1
 fi
 if [ "$MERGED" -eq 1 ]; then echo "MERGED"; fi"#,
@@ -3956,7 +3958,9 @@ fi"#,
                 .tickets
                 .iter()
                 .filter(|t| {
-                    (t.stage == KanbanStage::PrReview || t.stage == KanbanStage::Done)
+                    !t.archived
+                        && t.stage == KanbanStage::PrReview
+                        && t.pr_url.is_none()
                         && !t.identifier.starts_with("WAG-")
                 })
                 .map(|t| {

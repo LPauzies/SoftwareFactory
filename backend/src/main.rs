@@ -178,12 +178,6 @@ async fn main() {
 
     let orchestrator = Arc::new(Orchestrator::new(data_dir, default_repo_dir));
 
-    // Ensure any completed tickets have their local and remote Git branches created and pushed on startup
-    let orch_pr_init = Arc::clone(&orchestrator);
-    tokio::spawn(async move {
-        orch_pr_init.ensure_all_pr_branches_pushed().await;
-    });
-
     // Automatically sync Linear on startup and every `linear_sync_interval_seconds`,
     // and continuously monitor for merged PRs & auto-archive cards (CAI-25)
     let orch_bg = Arc::clone(&orchestrator);
