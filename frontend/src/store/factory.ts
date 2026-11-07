@@ -146,6 +146,296 @@ export interface AgentStepExecution {
   quality_gate_passed: boolean
 }
 
+export type AgentActivityState =
+  | 'running'
+  | 'crashed'
+  | 'waiting'
+  | 'completed'
+  | 'skipped'
+  | 'idle'
+
+export const DEFAULT_HEARTBEAT_TIMEOUT_MS = 30_000
+
+export interface StepActivityInfo {
+  state: AgentActivityState
+  isRunning: boolean
+  isCrashed: boolean
+  elapsedSeconds: number
+  lastSignalAgeSeconds: number | null
+  errorMessage: string | null
+}
+
+export interface TicketActivityInfo {
+  state: AgentActivityState
+  isRunning: boolean
+  isCrashed: boolean
+  activeRole: string | null
+  failedRole: string | null
+  elapsedSeconds: number
+  errorMessage: string | null
+}
+
+// shortcut: client-side activity & crash state derived from SSE step events and timestamps, upgrade to dedicated backend process heartbeat ping if sub-second OS PID liveness is needed
+export function useAgentActivityState(
+  step?: AgentStepExecution | null,
+  ticket?: FactoryTicket | null,
+  run?: PipelineRun | null,
+  options?: {
+    nowMs?: number
+    heartbeatTimeoutMs?: number
+    enforceHeartbeatTimeout?: boolean
+  }
+): StepActivityInfo {
+  const nowMs = options?.nowMs ?? Date.now()
+  const timeoutMs = options?.heartbeatTimeoutMs ?? DEFAULT_HEARTBEAT_TIMEOUT_MS
+
+  if (!step) {
+    return {
+      state: 'idle',
+      isRunning: false,
+      isCrashed: false,
+      elapsedSeconds: 0,
+      lastSignalAgeSeconds: null,
+      errorMessage: null,
+    }
+  }
+
+  const startedMs = step.started_at ? Date.parse(step.started_at) : NaN
+  const lastThought =
+    step.thinking_log && step.thinking_log.length > 0
+      ? step.thinking_log[step.thinking_log.length - 1]
+      : null
+  const lastThoughtMs = lastThought?.timestamp ? Date.parse(lastThought.timestamp) : NaN
+  const lastSignalMs = !Number.isNaN(lastThoughtMs)
+    ? lastThoughtMs
+    : !Number.isNaN(startedMs)
+      ? startedMs
+      : NaN
+
+  const elapsedSeconds =
+    step.status === 'running' && !Number.isNaN(startedMs)
+      ? Math.max(0, Math.floor((nowMs - startedMs) / 1000))
+      : Math.round(step.duration_seconds || 0)
+
+  const lastSignalAgeSeconds = !Number.isNaN(lastSignalMs)
+    ? Math.max(0, Math.floor((nowMs - lastSignalMs) / 1000))
+    : null
+
+  const errorThought = step.thinking_log?.find(
+    (t) => t.kind === 'error' || (t.kind === 'warning' && !step.quality_gate_passed)
+  )
+
+  const hasFatalErrorThought = step.thinking_log?.some((t) => t.kind === 'error') ?? false
+  const isHeartbeatExpired =
+    Boolean(options?.enforceHeartbeatTimeout) &&
+    step.status === 'running' &&
+    !Number.isNaN(lastSignalMs) &&
+    nowMs - lastSignalMs > timeoutMs
+
+  const isOrphanedRunningStep =
+    step.status === 'running' &&
+    (run?.status === 'failed' ||
+      (ticket != null && !ticket.active_role && run?.status !== 'running'))
+
+  if (
+    step.status === 'failed' ||
+    step.quality_gate_passed === false ||
+    hasFatalErrorThought ||
+    isOrphanedRunningStep ||
+    isHeartbeatExpired
+  ) {
+    const errorMessage =
+      errorThought?.content ||
+      (isHeartbeatExpired
+        ? `Heartbeat timeout (> ${Math.round(timeoutMs / 1000)}s sans signal de l'agent ${step.role})`
+        : step.summary && step.summary !== 'Queued in WAGNER Factory...'
+          ? step.summary
+          : `L'agent ${step.role} s'est arrêté de manière inattendue.`)
+    return {
+      state: 'crashed',
+      isRunning: false,
+      isCrashed: true,
+      elapsedSeconds,
+      lastSignalAgeSeconds,
+      errorMessage,
+    }
+  }
+
+  if (
+    step.status === 'running' &&
+    ticket?.pending_question &&
+    (!ticket.active_role || ticket.active_role === step.role)
+  ) {
+    return {
+      state: 'waiting',
+      isRunning: false,
+      isCrashed: false,
+      elapsedSeconds,
+      lastSignalAgeSeconds,
+      errorMessage: null,
+    }
+  }
+
+  if (
+    step.status === 'running' ||
+    (ticket?.active_role === step.role && step.status !== 'completed')
+  ) {
+    return {
+      state: 'running',
+      isRunning: true,
+      isCrashed: false,
+      elapsedSeconds,
+      lastSignalAgeSeconds,
+      errorMessage: null,
+    }
+  }
+
+  if (step.status === 'completed') {
+    return {
+      state: 'completed',
+      isRunning: false,
+      isCrashed: false,
+      elapsedSeconds,
+      lastSignalAgeSeconds,
+      errorMessage: null,
+    }
+  }
+
+  if (step.status === 'skipped') {
+    return {
+      state: 'skipped',
+      isRunning: false,
+      isCrashed: false,
+      elapsedSeconds: 0,
+      lastSignalAgeSeconds,
+      errorMessage: null,
+    }
+  }
+
+  return {
+    state: 'idle',
+    isRunning: false,
+    isCrashed: false,
+    elapsedSeconds: 0,
+    lastSignalAgeSeconds,
+    errorMessage: null,
+  }
+}
+
+export function evaluateTicketActivity(
+  ticket?: FactoryTicket | null,
+  run?: PipelineRun | null,
+  options?: {
+    nowMs?: number
+    heartbeatTimeoutMs?: number
+    enforceHeartbeatTimeout?: boolean
+  }
+): TicketActivityInfo {
+  if (!ticket) {
+    return {
+      state: 'idle',
+      isRunning: false,
+      isCrashed: false,
+      activeRole: null,
+      failedRole: null,
+      elapsedSeconds: 0,
+      errorMessage: null,
+    }
+  }
+
+  const activeStep = ticket.active_role
+    ? run?.steps?.find((s) => s.role === ticket.active_role) || null
+    : null
+
+  if (activeStep) {
+    const stepInfo = useAgentActivityState(activeStep, ticket, run, options)
+    if (stepInfo.isCrashed) {
+      return {
+        state: 'crashed',
+        isRunning: false,
+        isCrashed: true,
+        activeRole: null,
+        failedRole: activeStep.role,
+        elapsedSeconds: stepInfo.elapsedSeconds,
+        errorMessage: stepInfo.errorMessage,
+      }
+    }
+  }
+
+  if (ticket.pending_question) {
+    return {
+      state: 'waiting',
+      isRunning: false,
+      isCrashed: false,
+      activeRole: ticket.active_role,
+      failedRole: null,
+      elapsedSeconds: activeStep
+        ? useAgentActivityState(activeStep, ticket, run, options).elapsedSeconds
+        : 0,
+      errorMessage: null,
+    }
+  }
+
+  if (ticket.active_role) {
+    const stepInfo = activeStep
+      ? useAgentActivityState(activeStep, ticket, run, options)
+      : null
+    return {
+      state: 'running',
+      isRunning: true,
+      isCrashed: false,
+      activeRole: ticket.active_role,
+      failedRole: null,
+      elapsedSeconds: stepInfo?.elapsedSeconds ?? 0,
+      errorMessage: null,
+    }
+  }
+
+  if (run) {
+    const crashedStep = run.steps?.find(
+      (s) => useAgentActivityState(s, ticket, run, options).isCrashed
+    )
+    if (crashedStep || run.status === 'failed') {
+      const info = crashedStep
+        ? useAgentActivityState(crashedStep, ticket, run, options)
+        : null
+      return {
+        state: 'crashed',
+        isRunning: false,
+        isCrashed: true,
+        activeRole: null,
+        failedRole: crashedStep?.role || null,
+        elapsedSeconds: info?.elapsedSeconds ?? Math.round(run.total_duration_seconds || 0),
+        errorMessage:
+          info?.errorMessage ||
+          `Le pipeline a échoué (${run.version_tag}).`,
+      }
+    }
+  }
+
+  if (ticket.stage === 'done' || ticket.stage === 'pr_review') {
+    return {
+      state: 'completed',
+      isRunning: false,
+      isCrashed: false,
+      activeRole: null,
+      failedRole: null,
+      elapsedSeconds: Math.round(run?.total_duration_seconds || 0),
+      errorMessage: null,
+    }
+  }
+
+  return {
+    state: 'idle',
+    isRunning: false,
+    isCrashed: false,
+    activeRole: null,
+    failedRole: null,
+    elapsedSeconds: 0,
+    errorMessage: null,
+  }
+}
+
 export interface TestFactoryReport {
   total_scenarios: number
   passed_scenarios: number
@@ -423,18 +713,15 @@ export const useFactoryStore = defineStore('factory', () => {
     tickets.value.find((t) => t.id === selectedTicketId.value) || null
   )
 
-  const selectedTicketRun = computed(() => {
-    if (!selectedTicket.value) return null
-    if (selectedTicket.value.active_run_id) {
-      return (
-        runs.value.find((r) => r.id === selectedTicket.value?.active_run_id) ||
-        null
-      )
+  function runForTicket(tk?: FactoryTicket | null): PipelineRun | null {
+    if (!tk) return null
+    if (tk.active_run_id) {
+      return runs.value.find((r) => r.id === tk.active_run_id) || null
     }
-    return (
-      runs.value.find((r) => r.ticket_id === selectedTicket.value?.id) || null
-    )
-  })
+    return runs.value.find((r) => r.ticket_id === tk.id) || null
+  }
+
+  const selectedTicketRun = computed(() => runForTicket(selectedTicket.value))
 
   async function initialize() {
     loading.value = true
@@ -761,9 +1048,12 @@ export const useFactoryStore = defineStore('factory', () => {
       })
       const r = runs.value.find((x) => x.id === evt.run_id)
       if (r) {
+        r.status = 'running'
         const step = r.steps.find((s) => s.role === evt.role)
         if (step) {
           step.status = 'running'
+          step.started_at = step.started_at || new Date().toISOString()
+          step.completed_at = null
           step.agy_command = evt.agy_command
         }
       }
@@ -792,14 +1082,19 @@ export const useFactoryStore = defineStore('factory', () => {
       }
     } else if (evt.event_type === 'agent_step_completed') {
       const s: AgentStepExecution = evt.step
-      lastActivityToast.value = `DONE [${s.role}] // ${s.duration_seconds}s`
+      const isStepFailed = s.status === 'failed' || s.quality_gate_passed === false
+      lastActivityToast.value = isStepFailed
+        ? `CRASHED [${s.role}] // ${s.duration_seconds}s`
+        : `DONE [${s.role}] // ${s.duration_seconds}s`
       const tk = evt.ticket_id ? tickets.value.find((t) => t.id === evt.ticket_id) : null
       pushNotification({
         ticket_id: evt.ticket_id || null,
         ticket_identifier: tk?.identifier || null,
         role: s.role,
-        kind: 'completed',
-        title: `Agent [${s.role}] completed (${s.duration_seconds}s)`,
+        kind: isStepFailed ? 'rollback' : 'completed',
+        title: isStepFailed
+          ? `Agent [${s.role}] crashed / failed (${s.duration_seconds}s)`
+          : `Agent [${s.role}] completed (${s.duration_seconds}s)`,
         detail: s.summary,
       })
       const r = runs.value.find((x) => x.id === evt.run_id)
@@ -813,7 +1108,10 @@ export const useFactoryStore = defineStore('factory', () => {
       }
     } else if (evt.event_type === 'pipeline_completed') {
       const finishedRun: PipelineRun = normalizeRunPrStep(evt.run)
-      lastActivityToast.value = `PR READY // ${finishedRun.version_tag}`
+      const isFailed = finishedRun.status === 'failed'
+      lastActivityToast.value = isFailed
+        ? `PIPELINE FAILED // ${finishedRun.version_tag}`
+        : `PR READY // ${finishedRun.version_tag}`
       const idx = runs.value.findIndex((x) => x.id === finishedRun.id)
       if (idx !== -1) {
         runs.value[idx] = finishedRun
@@ -821,9 +1119,11 @@ export const useFactoryStore = defineStore('factory', () => {
         runs.value.unshift(finishedRun)
       }
       if (evt.ticket) {
-        evt.ticket.stage = 'pr_review'
-        evt.ticket.pr_branch = evt.ticket.pr_branch || finishedRun.pr_branch
-        evt.ticket.pr_url = evt.ticket.pr_url || finishedRun.pr_url
+        if (!isFailed) {
+          evt.ticket.stage = 'pr_review'
+          evt.ticket.pr_branch = evt.ticket.pr_branch || finishedRun.pr_branch
+          evt.ticket.pr_url = evt.ticket.pr_url || finishedRun.pr_url
+        }
         upsertTicket(evt.ticket)
       }
       if (evt.release) {
@@ -832,10 +1132,14 @@ export const useFactoryStore = defineStore('factory', () => {
       pushNotification({
         ticket_id: evt.ticket?.id || finishedRun.ticket_id || null,
         ticket_identifier: evt.ticket?.identifier || finishedRun.ticket_identifier || null,
-        role: 'PR',
-        kind: 'release',
-        title: `PR ready against main (${finishedRun.version_tag})`,
-        detail: `Branch ${finishedRun.pr_branch || 'wagner/main'} ready for human review (${finishedRun.total_duration_seconds}s)`,
+        role: isFailed ? 'DEV' : 'PR',
+        kind: isFailed ? 'rollback' : 'release',
+        title: isFailed
+          ? `Pipeline failed (${finishedRun.version_tag})`
+          : `PR ready against main (${finishedRun.version_tag})`,
+        detail: isFailed
+          ? `Agent execution stopped after ${finishedRun.total_duration_seconds}s — inspect step logs for details.`
+          : `Branch ${finishedRun.pr_branch || 'wagner/main'} ready for human review (${finishedRun.total_duration_seconds}s)`,
       })
     } else if (evt.event_type === 'rollback_triggered') {
       if (evt.ticket) upsertTicket(evt.ticket)
@@ -1147,6 +1451,7 @@ export const useFactoryStore = defineStore('factory', () => {
     projectTickets,
     selectedTicket,
     selectedTicketRun,
+    runForTicket,
     initialize,
     refreshState,
     markNotificationsRead,

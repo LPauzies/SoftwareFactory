@@ -6,10 +6,10 @@
   "scripts": {
     "dev": "vite --port 8888 --host",
     "build": "vite build",
-    "preview": "vite preview --port 8888"
+    "preview": "vite preview --port 8888",
+    "test": "esbuild src/store/factory.test.ts --bundle --platform=node --format=esm --outfile=/tmp/wagner-factory.test.mjs && node --test /tmp/wagner-factory.test.mjs"
   },
   "dependencies": {
-    "lucide-vue-next": "^0.454.0",
     "pinia": "^2.2.6",
     "vue": "^3.5.12"
   },

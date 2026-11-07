@@ -48,6 +48,11 @@ credentials.json
 service-account*.json
 .gemini/
 
+# Ephemeral agent deliverables
+.agents/adr_*.md
+.agents/*.tmp
+.agents/*.bak
+
 # =============================================================================
 # OS & Editor Files
 # =============================================================================

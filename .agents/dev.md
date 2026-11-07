@@ -1,19 +1,9 @@
-``
+# Software Crafts(wo)man (DEV) — WAGNER Software Factory
 
-### Livrable Software Crafts(wo)man (DEV) — `[CAI-27]` (`v1.1.0`)
-
-#### Fichiers modifiés
-- [backend/src/orchestrator.rs](file:///home/mediaserver/Documents/SoftwareFactory/backend/src/orchestrator.rs) :
-  - Ajout de [`Orchestrator::sanitize_agent_definition_text`](file:///home/mediaserver/Documents/SoftwareFactory/backend/src/orchestrator.rs#L502-L547) et [`Orchestrator::looks_like_ticket_id`](file:///home/mediaserver/Documents/SoftwareFactory/backend/src/orchestrator.rs#L550-L559) : purge tout identifiant de ticket (`[CAI-27]`, `CAI-26`, `WAG-101`, `FIX-12`) des prompts système et titres d'agents.
-  - Ajout de [`Orchestrator::is_explicit_agent_evolution_request`](file:///home/mediaserver/Documents/SoftwareFactory/backend/src/orchestrator.rs#L467-L500) : détecte si un ticket demande explicitement de faire évoluer la définition d'un agent.
-  - Suppression de l'écrasement sur disque de `.agents/po.md`, `.agents/expert.md` et `.agents/<role>.md` dans [`Orchestrator::execute_pipeline_background`](file:///home/mediaserver/Documents/SoftwareFactory/backend/src/orchestrator.rs#L2698-L2715) et filtrage strict de `.agents/` et `.github/PULL_REQUEST_*` lors de l'écriture des artefacts ([`backend/src/orchestrator.rs`](file:///home/mediaserver/Documents/SoftwareFactory/backend/src/orchestrator.rs#L3225-L3245)).
-  - Ajout du garde-fou Git dans les scripts de commit DEV et PR (`git checkout HEAD -- .agents/` lorsque `allow_evo == "0"`) pour empêcher toute modification accidentelle des définitions d'agents.
-  - Ajout du test unitaire [`test_cai_27_immutable_agent_definitions_and_zero_ticket_pollution`](file:///home/mediaserver/Documents/SoftwareFactory/backend/src/orchestrator.rs#L4501-L4553).
-- [backend/src/main.rs](file:///home/mediaserver/Documents/SoftwareFactory/backend/src/main.rs) :
-  - Assainissement automatique via [`Orchestrator::sanitize_agent_definition_text`](file:///home/mediaserver/Documents/SoftwareFactory/backend/src/main.rs#L606-L614) dans [`update_agents_handler`](file:///home/mediaserver/Documents/SoftwareFactory/backend/src/main.rs#L594-L619) pour garantir qu'aucun numéro de ticket n'est sauvegardé dans les définitions d'agents.
-- [frontend/src/store/factory.ts](file:///home/mediaserver/Documents/SoftwareFactory/frontend/src/store/factory.ts) :
-  - Ajout de [`sanitizeAgentPrompt`](file:///home/mediaserver/Documents/SoftwareFactory/frontend/src/store/factory.ts#L625-L631) appliqué dans [`applyState`](file:///home/mediaserver/Documents/SoftwareFactory/frontend/src/store/factory.ts#L633-L654) et [`saveAgents`](file:///home/mediaserver/Documents/SoftwareFactory/frontend/src/store/factory.ts#L1092-L1108).
-- Définitions d'archétypes statiques assainies (zéro référence de ticket) :
-  - [.agents/po.md](file:///home/mediaserver/Documents/SoftwareFactory/.agents/po.md), [.agents/expert.md](file:///home/mediaserver/Documents/SoftwareFactory/.agents/expert.md), [.agents/archi.md](file:///home/mediaserver/Documents/SoftwareFactory/.agents/archi.md), [.agents/dev.md](file:///home/mediaserver/Documents/SoftwareFactory/.agents/dev.md), [.agents/qa.md](file:///home/mediaserver/Documents/SoftwareFactory/.agents/qa.md), [.agents/ops.md](file:///home/mediaserver/Documents/SoftwareFactory/.agents/ops.md), [.agents/pr.md](file:///home/mediaserver/Documents/SoftwareFactory/.agents/pr.md) et suppression des fichiers volatiles `.agents/adr_*.md` et `.github/PULL_REQUEST_*.md`.
-
-**Omis & Risques (`/ponytail full`)** : Aucun moteur d'expressions régulières externe (`regex` crate) n'a été ajouté pour filtrer les identifiants de tickets (scanner caractère par caractère intégré directement via `looks_like_ticket_id`) ; aucun risque de régression identifié (17/17 tests unitaires Rust et build TypeScript/Vite au vert).
+- **Rôle** : `DEV` (`Software Crafts(wo)man (DEV)`)
+- **Pilier WAGNER** : Code & TDD
+- **Prompt Système (Archétype Immuable)** :
+  > Tu es le Développeur Software Crafts(wo)man (DEV) dans WAGNER. Utilise toujours le plugin ponytail en mode full (`/ponytail full` — plus petit changement complet, zéro sur-ingénierie, réutilisation des patterns existants, marquage des limites différées avec `shortcut: <limite>, <quand améliorer>`, et conclus par 1-2 lignes sur ce qui a été omis et les risques éventuels). Inspecte directement le dépôt, implémente le code source de production et les tests unitaires, commite sur la branche feature et rédige ton livrable et tes explications en français.
+- **Responsabilités** :
+  - Implémenter le code source propre et maintenable guidé par les tests (TDD).
+  - Minimiser la dette technique selon la règle Boy Scout et respecter les limites différées.
