@@ -386,6 +386,7 @@ impl Orchestrator {
                 pr_url: Some("https://github.com/LPauzies/SoftwareFactory/compare/main...wagner/wag-101-v1-0-0?expand=1".to_string()),
                 pr_branch: Some("wagner/wag-101-v1-0-0".to_string()),
                 version_tag: "v1.0.0".to_string(),
+                created_at: Utc::now() - chrono::Duration::days(3),
                 updated_at: Utc::now() - chrono::Duration::hours(6),
             },
             FactoryTicket {
@@ -406,6 +407,7 @@ impl Orchestrator {
                 pr_url: Some("https://github.com/LPauzies/SoftwareFactory/compare/main...wagner/wag-102-v1-1-0?expand=1".to_string()),
                 pr_branch: Some("wagner/wag-102-v1-1-0".to_string()),
                 version_tag: "v1.1.0".to_string(),
+                created_at: Utc::now() - chrono::Duration::days(2),
                 updated_at: Utc::now() - chrono::Duration::hours(2),
             },
             FactoryTicket {
@@ -426,6 +428,7 @@ impl Orchestrator {
                 pr_url: None,
                 pr_branch: None,
                 version_tag: "v1.2.0".to_string(),
+                created_at: Utc::now() - chrono::Duration::hours(12),
                 updated_at: Utc::now() - chrono::Duration::minutes(30),
             },
             FactoryTicket {
@@ -446,6 +449,7 @@ impl Orchestrator {
                 pr_url: None,
                 pr_branch: None,
                 version_tag: "v1.3.0".to_string(),
+                created_at: Utc::now() - chrono::Duration::hours(8),
                 updated_at: Utc::now() - chrono::Duration::minutes(15),
             },
             FactoryTicket {
@@ -466,6 +470,7 @@ impl Orchestrator {
                 pr_url: None,
                 pr_branch: None,
                 version_tag: "v1.0.0".to_string(),
+                created_at: Utc::now() - chrono::Duration::hours(6),
                 updated_at: Utc::now() - chrono::Duration::minutes(25),
             },
             FactoryTicket {
@@ -486,6 +491,7 @@ impl Orchestrator {
                 pr_url: None,
                 pr_branch: None,
                 version_tag: "v1.1.0".to_string(),
+                created_at: Utc::now() - chrono::Duration::hours(4),
                 updated_at: Utc::now() - chrono::Duration::minutes(10),
             },
             FactoryTicket {
@@ -506,6 +512,7 @@ impl Orchestrator {
                 pr_url: None,
                 pr_branch: None,
                 version_tag: "v1.0.0".to_string(),
+                created_at: Utc::now() - chrono::Duration::hours(2),
                 updated_at: Utc::now() - chrono::Duration::minutes(5),
             },
         ];
@@ -758,6 +765,7 @@ impl Orchestrator {
             projects: vec![project],
             linear_projects,
             tickets,
+            dismissed_ticket_ids: vec![],
             linear_status: LinearStatus {
                 connected: false,
                 has_api_key: false,
@@ -1364,24 +1372,49 @@ impl Orchestrator {
                             || rt
                                 .pr_url
                                 .as_deref()
-                                .is_some_and(|u| u.contains("wagner-factory/")))
+                                .is_some_and(|u| {
+                                    u.contains("wagner-factory/")
+                                        || u.contains("...wagner/")
+                                        || u.contains("/compare/main...")
+                                }))
                     {
-                        let slug_part = rt
-                            .identifier
-                            .to_lowercase()
-                            .chars()
-                            .map(|c| if c.is_alphanumeric() { c } else { '-' })
-                            .collect::<String>();
-                        let ver_part = rt.version_tag.replace('.', "-").to_lowercase();
-                        let branch_name = format!("wagner/{}-{}", slug_part, ver_part);
+                        let branch_name =
+                            Self::branch_name_for_ticket(Some(&rt.identifier), &rt.version_tag);
+                        let base_branch =
+                            cfg.base_branch_for_workspace(&PathBuf::from(&rt.repository_path));
                         rt.pr_branch = Some(branch_name.clone());
                         rt.pr_url = Some(format!(
-                            "https://github.com/{}/compare/main...{}?expand=1",
-                            rt.github_repo, branch_name
+                            "https://github.com/{}/compare/{}...{}?expand=1",
+                            rt.github_repo, base_branch, branch_name
                         ));
                     }
                 }
             }
+            // Exclude any tickets that the operator explicitly deleted from the Wagner Kanban board
+            let dismissed = guard.dismissed_ticket_ids.clone();
+            remote_tickets.retain(|t| {
+                !dismissed.iter().any(|d| d == &t.id || d == &t.identifier)
+            });
+
+            // Sort tickets by ticket number ascending (oldest ticket number first, e.g. CAI-1, CAI-2, CAI-10)
+            remote_tickets.sort_by(|a, b| {
+                let num_a = a
+                    .identifier
+                    .rsplit('-')
+                    .next()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(u64::MAX);
+                let num_b = b
+                    .identifier
+                    .rsplit('-')
+                    .next()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(u64::MAX);
+                num_a
+                    .cmp(&num_b)
+                    .then_with(|| a.identifier.cmp(&b.identifier))
+            });
+
             // Always replace guard.tickets with remote_tickets so deleted Linear issues are purged immediately
             guard.tickets = remote_tickets;
 
@@ -1925,6 +1958,54 @@ impl Orchestrator {
         });
 
         Ok(updated_ticket)
+    }
+
+    /// Delete an agent-covered ticket card from the Kanban board (refuses deleting `Todo` / Backlog cards).
+    pub async fn delete_ticket(&self, ticket_id: &str) -> Result<String> {
+        let (run_id, identifier) = {
+            let mut guard = self.state.write().await;
+            let idx = guard
+                .tickets
+                .iter()
+                .position(|t| t.id == ticket_id)
+                .ok_or_else(|| anyhow::anyhow!("Ticket not found"))?;
+            if guard.tickets[idx].stage == KanbanStage::Todo {
+                return Err(anyhow::anyhow!(
+                    "Backlog (Todo) tickets cannot be deleted; only cards covered by agents can be deleted."
+                ));
+            }
+            let removed = guard.tickets.remove(idx);
+            if !guard.dismissed_ticket_ids.contains(&removed.id) {
+                guard.dismissed_ticket_ids.push(removed.id.clone());
+            }
+            if !guard.dismissed_ticket_ids.contains(&removed.identifier) {
+                guard.dismissed_ticket_ids.push(removed.identifier.clone());
+            }
+            (removed.active_run_id, removed.identifier)
+        };
+
+        if let Some(ref rid) = run_id {
+            if let Some(abort_handle) = self.active_tasks.write().await.remove(rid) {
+                abort_handle.abort();
+            }
+        }
+
+        self.persist().await;
+
+        let _ = self.event_tx.send(FactoryEvent::TicketDeleted {
+            ticket_id: ticket_id.to_string(),
+            identifier: identifier.clone(),
+        });
+
+        let api_key_opt = self.linear_api_key.read().await.clone();
+        if let Some(api_key) = api_key_opt {
+            let tid_owned = ticket_id.to_string();
+            tokio::spawn(async move {
+                LinearClient::delete_issue(&api_key, &tid_owned).await;
+            });
+        }
+
+        Ok(identifier)
     }
 
     async fn execute_pipeline_background(
