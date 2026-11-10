@@ -3544,8 +3544,8 @@ fi"#,
                 })
                 .map(|l| {
                     let clean = l.trim().trim_start_matches(['-', '*', '>']).trim();
-                    if clean.len() > 120 {
-                        format!("{}...", &clean[..120])
+                    if let Some((idx, _)) = clean.char_indices().nth(120) {
+                        format!("{}...", &clean[..idx])
                     } else {
                         clean.to_string()
                     }
@@ -4686,5 +4686,22 @@ let test = 123;
         assert_eq!(updated_tk.review_feedback.as_deref(), Some(feedback));
         assert!(run.feature_request.contains("OPERATOR REVIEW FEEDBACK"));
         assert!(run.feature_request.contains(feedback));
+    }
+
+    #[test]
+    fn test_utf8_char_boundary_truncation_does_not_panic() {
+        // String where byte 120 falls right inside a multi-byte UTF-8 char ('â' is 2 bytes)
+        let mut sample = "A".repeat(119);
+        sample.push_str("âge d'or et suite du texte");
+        assert!(sample.len() > 120);
+
+        let truncated = if let Some((idx, _)) = sample.char_indices().nth(120) {
+            format!("{}...", &sample[..idx])
+        } else {
+            sample.to_string()
+        };
+
+        assert!(truncated.ends_with("..."));
+        assert_eq!(truncated.chars().count(), 123); // 120 chars + 3 dots
     }
 }

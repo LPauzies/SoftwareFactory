@@ -14,7 +14,7 @@ RUN npm run build
 # =============================================================================
 # Stage 2: Build Rust (Axum + Tokio) Orchestrator Backend
 # =============================================================================
-FROM rust:1.83-bookworm AS backend-builder
+FROM rust:1-bookworm AS backend-builder
 
 WORKDIR /app/backend
 

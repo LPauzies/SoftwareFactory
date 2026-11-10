@@ -175,7 +175,7 @@ async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
             std::env::var("RUST_LOG")
-                .unwrap_or_else(|_| "software_factory_backend=info,tower_http=info".to_string()),
+                .unwrap_or_else(|_| "wagner_backend=info,tower_http=info".to_string()),
         )
         .init();
 

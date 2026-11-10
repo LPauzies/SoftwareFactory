@@ -1,5 +1,5 @@
 [package]
-name = "software-factory-backend"
+name = "wagner-backend"
 version = "0.1.0"
 edition = "2021"
 description = "Wagner Autonomous Software Factory orchestrating Gemini models via Antigravity (agy) subprocesses"

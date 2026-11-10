@@ -68,6 +68,18 @@ fn is_availability_error(err: &str) -> bool {
         "blocked by safety",
         "rate limit",
         "overloaded",
+        "authentication failed",
+        "timed out",
+        "timeout",
+        "auth failed",
+        "unauthorized",
+        "permission denied",
+        "deadline exceeded",
+        "network error",
+        "service unavailable",
+        "503",
+        "502",
+        "504",
     ]
     .iter()
     .any(|k| e.contains(k))
@@ -537,6 +549,8 @@ mod tests {
     fn detects_quota_errors() {
         assert!(is_availability_error("agy error: Individual quota reached. Please upgrade your subscription"));
         assert!(is_availability_error("Your previous response was blocked by content safety filters Output retries exhausted after 4 attempts"));
+        assert!(is_availability_error("agy error (model gemini-4-argon-medium): authentication failed or timed out"));
+        assert!(is_availability_error("Request timed out waiting for upstream agent"));
         assert!(!is_availability_error("Failed to spawn agy subprocess: No such file"));
     }
 }
